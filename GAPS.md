@@ -112,3 +112,210 @@ an hour or needs reading library source), **low** (friction).
 - The lake reference lists `timestamp` among the types but not how to make
   one: it's `Datum.integral(P_TIMESTAMPTZ, micros)` (`from iceberg.types
   import P_TIMESTAMPTZ`), found in `iceberg/values.mojo`.
+
+## 7. orca refuses a keyed sensor over a dataset a dated pipeline writes (high)
+
+- **Tried:** what PROMPT.md asks and the orca skill shows: `mojo_history`
+  keyed on `mojo.repos` (`partitions=Keyed["mojo.repos", ...]`,
+  `sensor=True`), with `mojo.repos` written by the daily sensor
+  `mojo_repos`.
+- **Happened:** `orca register ./build/mojo_history` fails:
+  `orca: .../build/mojo_history can't be registered: the sensor
+  mojo_history (keyed) reads mojo.repos, which mojo_repos (daily) writes,
+  and no rule turns a name into a date or a date into a name`. It fails
+  the same with `reads=[REPOS]` removed: the keys dataset counts as a read
+  (`kind_mismatch` in `src/orca/scheduler.mojo`). The skill's own sample
+  (`Keyed["lake.repos", "repo"]`, "new snapshots start runs, for the keys
+  that are new") can only register if nothing dated writes `lake.repos`,
+  which in practice means nothing in orca writes it.
+- **Did instead:** `mojo_repos` also writes the new repositories' keys to
+  a separate table, `mojo.repo_keys`, straight through iceberg
+  (`lake.append_keys`), not declared in `writes=`. Registration passes, and
+  the scheduler sees those snapshots by polling `mojo_history sense` and
+  starts runs for the new keys (it worked: `sensed mojo.repo_keys@... for
+  mojo_history 1 runs`). The cost: the lineage graph and the Datasets page
+  don't show `mojo_repos → mojo.repo_keys → mojo_history`, and a retried
+  `mojo_repos` can write a key twice (harmless for distinct keys).
+  `mojo_history` reads `mojo.repos` sizes with `load_dataset`, undeclared,
+  for the same reason.
+- **Fix:** orca: a keyed sensor's *keys dataset* should be allowed to come
+  from a dated pipeline; the new keys are the distinct values in the new
+  snapshot, which needs no date↔name rule. (The refusal makes sense for the
+  other direction, a dated sensor reading a keyed pipeline's output.) Until
+  then, the orca skill should say plainly that a keyed sensor's keys must
+  be written outside orca, and show the workaround.
+
+## 8. orca `Name` keys can't contain `/`, so repositories aren't keys (high)
+
+- **Tried:** keys `owner/name` (the natural key, and the skill's example
+  is repositories: "for things that aren't dates and grow (repositories,
+  devices, logs)").
+- **Happened:** `./build/mojo_history run --partitions @all` prints
+  `not a name (1 to 128 bytes of A-Z a-z 0-9 . _ : -, no '..'):
+  'modular/modular'` and the usage text, and exits.
+- **Did instead:** a `key` column, `owner:name` (GitHub owners can't
+  contain `:`), and `lake.repo_key` / `key_repo` to convert.
+- **Fix:** orca: allow `/` in names (it's the separator in run paths and log
+  paths, so escape it there), or say the character set in the skill next to
+  "The partition type is `Name`".
+
+## 9. Mojo 1.2.0's `String.splitlines()` splits on tabs (high: silently wrong numbers)
+
+- **Tried:** to read `git log --numstat` (`added<TAB>deleted<TAB>path`)
+  line by line with `splitlines()`.
+- **Happened:** every numstat line came apart into three "lines", so no
+  line matched and every repository had 0 lines of Mojo, with no error.
+  `String("1\t2\tx.mojo\nnext").splitlines()` gives 4 items. (Python's
+  `splitlines` doesn't split on `\t`; it looks like the range check covers
+  0x09-0x0D instead of 0x0A-0x0D.)
+- **Did instead:** `split("\n")`, and `tests/test_history.mojo` checks the
+  numbers on a log with tabs. Note orca's own `scheduler.mojo` uses
+  `splitlines()` on names files, so a tab there would split a name too.
+- **Fix:** Modular's stdlib; until then mojo-syntax could warn
+  "`splitlines()` also splits on `\t`".
+
+## 10. A step's mapped partitions run one after another (medium)
+
+- **Tried:** to read 50 repositories' histories in parallel, one dista
+  task each, as the prompt says.
+- **Happened:** nothing in the skills says whether mapped steps of a run
+  run concurrently. orca's `pipeline.mojo` says steps run "in order", so a
+  mapped step per key that calls one task and waits would read them one at
+  a time. The orca skill does show a `Gather` step first in a pipeline
+  only for `Seq[Month]` (in a test), not for keyed `Seq[Name]`.
+- **Did instead:** `mojo_history` is one `Gather` step over `Seq[Name]`
+  (it compiles and runs) that sends every repository to a task at once and
+  collects them. The UI then shows one step for 50 repositories, and one
+  repository's failure is reported in the log, not as a failed partition.
+- **Fix:** orca skill: say that mapped steps run sequentially and that
+  parallelism comes from dista tasks inside a step; show a keyed Gather.
+
+## 11. A day's run that ran out of GitHub API budget can't be re-run by backfill (medium)
+
+- **Tried:** with the unauthenticated limit (60 requests an hour) used up,
+  `mojo_repos` checks some candidates and leaves the rest. After the limit
+  resets, `orca backfill mojo_repos 2024-06-12` to check the rest.
+- **Happened:** backfills skip partitions that are done ("A key is done
+  when every mapped step has succeeded for it in a run of the pipeline's
+  current code"), so nothing was queued. Only the UI's Rerun, a manual
+  `run`, or new code re-runs it.
+- **Did instead:** unchecked candidates are recorded in `mojo.checked` as
+  `unchecked`, and every later `mojo_repos` run checks them first, whatever
+  day it is for. Locally, I re-ran the day with the UI's Rerun.
+- **Fix:** orca: `orca backfill --force` (or `orca rerun <pipeline> KEY`)
+  on the command line; the skill lists the UI's actions but not this
+  limit of `backfill`.
+
+## 12. Changing a table's schema means deleting it (medium)
+
+- **Tried:** to add two columns to `mojo.checked` after it had been
+  created.
+- **Happened:** `ensure_table` only creates; it never evolves an existing
+  table, and iceberg-mojo reads evolved tables but has no API to add a
+  column. Locally I deleted the table; on AWS, with the tables in the public
+  bucket, that would mean losing data or writing metadata by hand.
+- **Fix:** iceberg-mojo: `Table.add_column` / `update_schema`; orca:
+  `ensure_table` adding missing optional columns; the lake reference should
+  say what to do when a schema changes.
+
+## 13. The default UI port can be taken, and the skills only name the variable once (low)
+
+- **Tried:** `orca ui` while another orca UI (another project) ran.
+- **Happened:** `AddressInUse: 127.0.0.1:8270`, and the process exited.
+- **Did instead:** `ORCA_UI_ADDR=127.0.0.1:8271 ./build/orca ui`.
+- **Fix:** none needed beyond the skill's existing mention in local.md;
+  the error could say "set ORCA_UI_ADDR".
+
+## 14. pixi tasks can't use shell loops (low)
+
+- **Tried:** the local reference's build loop (`for p in pipelines/*.mojo;
+  do ...; done`) as one pixi task, as it suggests ("A pixi task per
+  program saves typing").
+- **Happened:** `Error: × failed to parse shell script ... ╰─▶ Unsupported
+  reserved word.` pixi's task shell has no `for`.
+- **Did instead:** one task per program and a `build` task that depends on
+  them.
+- **Fix:** magmalake-apps local.md: show the `[tasks]` block.
+
+## 15. A sensor only sees snapshots made after it was registered; the skills don't say so (medium)
+
+- **Happened:** orca's `sensors.mojo` says "A sensor counts from when it's
+  registered as one: the snapshots its datasets have then are recorded as
+  seen without a run". The orca skill and the local reference say nothing
+  about order, and their sample runs `register` right before `backfill`
+  for one pipeline only. Loading the lake first and registering the
+  sensors afterwards would start nothing.
+- **Did instead:** registered all three pipelines, then backfilled.
+- **Fix:** orca skill, "Keyed partitions and sensors": "Register sensors
+  before the data they sense; use `backfill` or `rebuild` for what came
+  before."
+
+## 16. The UI's actions can't be scripted without knowing their form fields (low)
+
+- **Tried:** `curl -X POST http://127.0.0.1:8271/runs/2/rerun` to re-run
+  a day (gap 11).
+- **Happened:** 403 `this form wasn't posted from orca ui's own pages (its
+  Origin or Referer isn't this server)`; with an `Origin` header, 409 `Not
+  done: pipeline mojo_repos has no step`; it needs `-d step=find_repos`.
+- **Fix:** an `orca rerun <run> [--from STEP]` command, or a line in the
+  skill on the UI's JSON actions.
+
+## 17. Smaller things
+
+- mojoshelf-consume says pixi mode *requires* the
+  `https://repo.prefix.dev/modular-community` channel; `pixi shelf add
+  orca-mojo` worked without it (as the orca skill implies). One of them is
+  out of date.
+- `pixi shelf add orca-mojo` took 2.5 minutes and printed every tin's
+  rattler-build log; a first-time user may think it hung.
+- A repository `mojo_history` skipped (too big for `MOJO_HISTORY_MAX_KB`)
+  still counts as done for orca, so reading it later needs a rerun or a
+  rebuild. That's this project's choice, but orca has no "skipped"
+  outcome for a key in a gather step.
+- The `orca lineage mojo.commits` output shows no inputs (gap 7: the keys
+  table is written outside orca, and `mojo.repos` is read undeclared).
+
+---
+
+## What the local run did, the orca way
+
+Postgres from conda-forge under `build/pg`, `scripts/env.sh`
+(`GHARCHIVE_HOURS=15,17`, `MOJO_HISTORY_MAX_KB=100000`,
+`ORCA_SENSE_SECONDS=10`), then:
+
+```
+$ ./build/orca register ./build/gharchive ./build/mojo_repos ./build/mojo_history
+registered gharchive
+registered mojo_repos
+registered mojo_history
+$ ./build/orca scheduler & ORCA_UI_ADDR=127.0.0.1:8271 ./build/orca ui &
+$ ./build/orca backfill gharchive 2024-06-12
+queued 1 runs
+```
+
+The scheduler's log:
+
+```
+started gharchive run 1 pid 86237
+reaped pid 86237 exit 0                       # 476,227 events, 2 hours, ~10 s
+sensed gharchive.events@60695637061508408 for mojo_repos run 2 for 2024-06-12
+sensed gharchive.events@1347351991139851327 for mojo_repos run 2 for 2024-06-12
+started mojo_repos run 2 pid 86255
+reaped pid 86255 exit 0                       # GitHub rate limit already used up: 23 candidates unchecked
+started mojo_repos run 3 pid 87939            # the UI's Rerun, after the limit reset
+reaped pid 87939 exit 0                       # 4 Mojo repositories, 19 others (forks, gone, not Mojo)
+sensed mojo.repo_keys@4677741210574082762 for mojo_history 1 runs from run 4
+started mojo_history run 4 pid 87975
+reaped pid 87975 exit 0                       # 3 cloned, modular/modular skipped for size
+```
+
+`mojo_history` run 4: NuMojo 210 commits and 21 migrations (69,563 lines
+of Mojo now; none → magic in 2024-10, magic → pixi in 2025-06, Mojo 24.5 →
+1.2.0), Mojonet 139 commits and 6 migrations, mojo-flx 23 commits; 372
+commits and 27 migrations in all. The UI (`/`, `/runs/<id>`,
+`/pipelines/<name>`, `/datasets`, each also JSON with `Accept:
+application/json`) showed every run, step, log and snapshot; the
+mojo_history page showed "Keys From mojo.repo_keys @ 4677741210574082762,
+Keys 4, Done 4". `orca lineage mojo.repos` traced it back to
+`gharchive.events` and run 1; `orca lineage mojo.commits` couldn't (gap 7).
+The console served all three pages and their JSON from those tables.
