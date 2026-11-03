@@ -13,6 +13,7 @@ comptime EVENTS = "gharchive.events"
 comptime REPOS = "mojo.repos"
 comptime COMMITS = "mojo.commits"
 comptime MIGRATIONS = "mojo.migrations"
+comptime CHECKED = "mojo.checked"
 
 comptime EVENTS_SCHEMA = (
     '{"schema-id":0,"type":"struct","fields":['
@@ -36,8 +37,12 @@ comptime REPOS_SCHEMA = (
     '{"id":8,"name":"default_branch","required":false,"type":"string"},'
     '{"id":9,"name":"description","required":false,"type":"string"},'
     '{"id":10,"name":"size_kb","required":false,"type":"long"},'
-    '{"id":11,"name":"language","required":false,"type":"string"}]}'
+    '{"id":11,"name":"language","required":false,"type":"string"},'
+    '{"id":12,"name":"key","required":true,"type":"string"},'
+    '{"id":13,"name":"fork","required":false,"type":"boolean"}]}'
 )
+"""`key` is `repo` as an orca key: `owner:name`, because orca's `Name`
+keys can't hold a `/`. mojo_history is keyed on it."""
 
 comptime COMMITS_SCHEMA = (
     '{"schema-id":0,"type":"struct","fields":['
@@ -63,6 +68,17 @@ comptime MIGRATIONS_SCHEMA = (
 )
 
 
+comptime CHECKED_SCHEMA = (
+    '{"schema-id":0,"type":"struct","fields":['
+    '{"id":1,"name":"repo","required":true,"type":"string"},'
+    '{"id":2,"name":"checked_at","required":true,"type":"timestamptz"},'
+    '{"id":3,"name":"outcome","required":true,"type":"string"},'
+    '{"id":4,"name":"signals","required":false,"type":"string"},'
+    '{"id":5,"name":"how","required":false,"type":"string"}]}'
+)
+"""Every candidate mojo_repos asked GitHub about, so it asks once."""
+
+
 def events_schema() raises -> Schema:
     return Schema.parse(EVENTS_SCHEMA)
 
@@ -73,6 +89,10 @@ def events_spec() raises -> PartitionSpec:
         0,
         [PartitionField.single(3, 1000, "created_day", parse_transform("day"))],
     )
+
+
+def checked_schema() raises -> Schema:
+    return Schema.parse(CHECKED_SCHEMA)
 
 
 def repos_schema() raises -> Schema:
@@ -96,6 +116,16 @@ def str_or_null(s: String) -> Datum:
     if s.byte_length() == 0:
         return Datum.none()
     return Datum.string_(s)
+
+
+def repo_key(repo: String) -> String:
+    """`owner/name` as an orca key, `owner:name`."""
+    return repo.replace("/", ":")
+
+
+def key_repo(key: String) -> String:
+    """An orca key, `owner:name`, back to `owner/name`."""
+    return key.replace(":", "/")
 
 
 def warehouse() -> String:

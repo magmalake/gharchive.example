@@ -149,7 +149,7 @@ def manifest_version(text: String) -> String:
     first version number in the spec of the first of `packages()` it lists
     as a dependency (`max = ">=24.5,<25"` gives 24.5). Empty if none."""
     for pkg in packages():
-        for line in text.splitlines():
+        for line in text.split("\n"):
             var l = String(line.strip())
             if not l.startswith(pkg):
                 continue

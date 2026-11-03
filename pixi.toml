@@ -7,6 +7,15 @@ platforms = ["osx-arm64", "linux-aarch64"]
 version = "0.1.0"
 
 [tasks]
+# Build the way orca's image does: every program with -I src.
+build-orca = "mkdir -p build && mojo build bin/scheduler.mojo -o build/orca"
+build-console = "mkdir -p build && mojo build -I src bin/console.mojo -o build/console"
+build-gharchive = "mkdir -p build && mojo build -I src pipelines/gharchive.mojo -o build/gharchive"
+build-mojo-repos = "mkdir -p build && mojo build -I src pipelines/mojo_repos.mojo -o build/mojo_repos"
+build-mojo-history = "mkdir -p build && mojo build -I src pipelines/mojo_history.mojo -o build/mojo_history"
+build-pipelines = { depends-on = ["build-gharchive", "build-mojo-repos", "build-mojo-history"] }
+build = { depends-on = ["build-orca", "build-pipelines", "build-console"] }
+test = "mojo run -I src tests/test_versions.mojo && mojo run -I src tests/test_history.mojo"
 
 [dependencies]
 mojo-compiler = "==1.2.0"
@@ -32,3 +41,5 @@ roaring-mojo = { git = "https://github.com/magmalake/roaring.mojo.git", rev = "a
 hashes-mojo = { git = "https://github.com/magmalake/hashes.mojo.git", rev = "395aca597f9410bd0511df44d972f14b10a8b01d" }
 iceberg-mojo = { git = "https://github.com/magmalake/iceberg.mojo.git", rev = "d788c877b3d05f9be6a34946ec1f87a35a38170f" }
 orca-mojo = { git = "https://github.com/magmalake/orca.mojo.git", rev = "e1a385907db56012dd4bbe6649538dc9df0299c4" }
+postgresql = ">=18.4,<19"
+git = ">=2.56.0,<3"
