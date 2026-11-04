@@ -3,16 +3,18 @@
 from std.os import getenv
 from std.time import perf_counter_ns
 
-from iceberg.batch import ColumnBuilder, batch_of
+from iceberg.batch import ColumnBuilder, is_var_width_array
+from iceberg.kernels import arrow_type_for
+from iceberg.schema import Schema
+from parquet.arrow import ArrayData
 from iceberg.catalog.filesystem import Table
-from iceberg.values import Datum
 from parquet import RecordBatch
 
 from datafiles import BatchSink, DataFiles, TableWriter
 from fetch import get_bytes
 from gzstream import FINISHED, GzipInflater
-from jscan import Range, field, path, raw, text, timestamp_micros
-from lake import events_schema, str_or_null, ts
+from jscan import Range, find_newline, scan_event, text, timestamp_micros
+from lake import events_schema
 
 comptime ROWS_PER_BATCH = 50_000
 
@@ -45,32 +47,111 @@ def parse_hours(spec: String) raises -> List[Int]:
     return out^
 
 
+struct _Col(Movable):
+    """One column built straight into Arrow buffers, as `ColumnBuilder`
+    would build it from `Datum`s: a validity bit for every row, offsets
+    for strings, little-endian 64-bit values otherwise."""
+
+    var a: ArrayData
+
+    def __init__(out self, schema: Schema, field_id: Int) raises:
+        var b = ColumnBuilder.of(schema, field_id)
+        self.a = ArrayData(
+            arrow_type_for(b.kind, b.precision, b.scale, b.length), b.name
+        )
+        self.a.nullable = b.nullable
+        self.a.field_id = Int32(field_id)
+        if is_var_width_array(self.a):
+            self.a.offsets.append(0)
+
+    @always_inline
+    def _row(mut self, valid: Bool):
+        var r = self.a.length
+        if r & 7 == 0:
+            self.a.validity.append(0)
+        if valid:
+            self.a.validity[r >> 3] |= UInt8(1) << UInt8(r & 7)
+        else:
+            self.a.null_count += 1
+        self.a.length = r + 1
+
+    @always_inline
+    def add_bytes(mut self, s: Span[UInt8, _]) raises:
+        self._row(True)
+        self.a.values.extend(s)
+        if len(self.a.values) > 0x7FFFFFFF:
+            raise Error("gharchive: a string column passed 2 GiB in a batch")
+        self.a.offsets.append(Int32(len(self.a.values)))
+
+    @always_inline
+    def add_null(mut self):
+        self._row(False)
+        self.a.offsets.append(Int32(len(self.a.values)))
+
+    @always_inline
+    def add_i64(mut self, v: Int64):
+        self._row(True)
+        var at = len(self.a.values)
+        self.a.values.resize(at + 8, 0)
+        self.a.values.unsafe_ptr().unsafe_offset(at).unsafe_bitcast[
+            Int64
+        ]().unsafe_store[alignment=1](v)
+
+    def take(deinit self) -> ArrayData:
+        return self.a^
+
+
+def _add_text(mut c: _Col, data: Span[UInt8, _], r: Range, null_if_empty: Bool) raises:
+    """`text(data, r)` into `c`: an escaped string is decoded, a plain one
+    copied as it is; "" (absent, null, empty) is null if `null_if_empty`."""
+    var s = r.start + 1
+    var e = r.end - 1
+    if r.found() and r.end - r.start >= 2 and data[r.start] == 0x22:
+        var plain = True
+        for k in range(s, e):
+            if data[k] == 0x5C:
+                plain = False
+                break
+        if plain:
+            if e > s or not null_if_empty:
+                c.add_bytes(data[s:e])
+            else:
+                c.add_null()
+            return
+    var t = text(data, r)
+    if t.byte_length() == 0 and null_if_empty:
+        c.add_null()
+    else:
+        c.add_bytes(t.as_bytes())
+
+
 struct _Cols(Movable):
-    var id: ColumnBuilder
-    var type: ColumnBuilder
-    var created: ColumnBuilder
-    var repo: ColumnBuilder
-    var actor: ColumnBuilder
-    var payload: ColumnBuilder
+    var id: _Col
+    var type: _Col
+    var created: _Col
+    var repo: _Col
+    var actor: _Col
+    var payload: _Col
 
     def __init__(out self) raises:
         var s = events_schema()
-        self.id = ColumnBuilder.of(s, 1)
-        self.type = ColumnBuilder.of(s, 2)
-        self.created = ColumnBuilder.of(s, 3)
-        self.repo = ColumnBuilder.of(s, 4)
-        self.actor = ColumnBuilder.of(s, 5)
-        self.payload = ColumnBuilder.of(s, 6)
+        self.id = _Col(s, 1)
+        self.type = _Col(s, 2)
+        self.created = _Col(s, 3)
+        self.repo = _Col(s, 4)
+        self.actor = _Col(s, 5)
+        self.payload = _Col(s, 6)
 
     def take(deinit self) raises -> RecordBatch:
-        var cols = List[ColumnBuilder]()
-        cols.append(self.id^)
-        cols.append(self.type^)
-        cols.append(self.created^)
-        cols.append(self.repo^)
-        cols.append(self.actor^)
-        cols.append(self.payload^)
-        return batch_of(cols)
+        var batch = RecordBatch()
+        batch.num_rows = self.id.a.length
+        batch.roots.append(batch.arena.add(self.id^.take()))
+        batch.roots.append(batch.arena.add(self.type^.take()))
+        batch.roots.append(batch.arena.add(self.created^.take()))
+        batch.roots.append(batch.arena.add(self.repo^.take()))
+        batch.roots.append(batch.arena.add(self.actor^.take()))
+        batch.roots.append(batch.arena.add(self.payload^.take()))
+        return batch^
 
 
 def _int(s: String) -> Int64:
@@ -102,27 +183,24 @@ struct EventParser(Movable):
         parsed as a whole one."""
         var start = begin
         while start < n:
-            var end = start
-            while end < n and data[end] != 0x0A:
-                end += 1
+            var end = find_newline(data, start, n)
             if end > start:
                 self._line(data, Range(start, end))
             start = end + 1
 
     def _line(mut self, data: Span[UInt8, _], line: Range) raises:
-        var id = field(data, line, "id")
-        var created = field(data, line, "created_at")
-        if not (id.found() and created.found()):
+        var f = scan_event(data, line)
+        if not (f.id.found() and f.created_at.found()):
             self.bad += 1
             return
-        self.cols.id.add(Datum.long_(_int(text(data, id))))
-        self.cols.type.add(Datum.string_(text(data, field(data, line, "type"))))
-        self.cols.created.add(ts(timestamp_micros(data, created)))
-        self.cols.repo.add(Datum.string_(text(data, path(data, line, "repo", "name"))))
-        self.cols.actor.add(str_or_null(text(data, path(data, line, "actor", "login"))))
-        var p = field(data, line, "payload")
+        self.cols.id.add_i64(_int(text(data, f.id)))
+        _add_text(self.cols.type, data, f.type, False)
+        self.cols.created.add_i64(timestamp_micros(data, f.created_at))
+        _add_text(self.cols.repo, data, f.repo_name, False)
+        _add_text(self.cols.actor, data, f.actor_login, True)
+        var p = f.payload
         if p.found():
-            self.cols.payload.add(Datum.string_(raw(data, p)))
+            self.cols.payload.add_bytes(data[p.start : p.end])
         else:
             self.cols.payload.add_null()
         self.rows += 1

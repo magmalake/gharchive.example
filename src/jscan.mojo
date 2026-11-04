@@ -3,8 +3,13 @@
 GH Archive events are one JSON object per line. We need six top-level
 fields and the payload *as written*, so instead of building a DOM we walk
 the bytes once and hand back the byte range of each value. `field` finds a
-key in an object; `text` decodes a string value.
+key in an object; `text` decodes a string value. `scan_event` finds all the
+fields gharchive stores in one pass over a line, stepping over string
+contents and nested values sixteen bytes at a time.
 """
+
+from std.bit import count_trailing_zeros
+from std.memory.unsafe import pack_bits
 
 
 @fieldwise_init
@@ -124,6 +129,167 @@ def field(b: Span[UInt8, _], obj: Range, key: StringSlice) -> Range:
         if _key_is(b, ks, ke, key):
             return Range(vs, i)
     return Range(-1, -1)
+
+
+comptime _W = 16
+comptime _V = SIMD[DType.uint8, _W]
+
+
+@always_inline
+def find_newline(b: Span[UInt8, _], var i: Int, end: Int) -> Int:
+    """The index of the next `\\n` at or after `i`, or `end`."""
+    var p = b.unsafe_ptr()
+    while i + _W <= end:
+        var m = pack_bits[dtype=DType.uint16](
+            p.unsafe_load[width=_W](i).eq(_V(0x0A))
+        )
+        if m != 0:
+            return i + Int(count_trailing_zeros(m))
+        i += _W
+    while i < end and p[unsafe_offset=i] != 0x0A:
+        i += 1
+    return i
+
+
+@always_inline
+def _skip_string_fast(b: Span[UInt8, _], var i: Int, end: Int) -> Int:
+    """`skip_string`, sixteen bytes at a time between quotes and escapes."""
+    var p = b.unsafe_ptr()
+    i += 1
+    while True:
+        if i + _W <= end:
+            var c = p.unsafe_load[width=_W](i)
+            var m = pack_bits[dtype=DType.uint16](
+                c.eq(_V(_QUOTE)) | c.eq(_V(_BSLASH))
+            )
+            if m == 0:
+                i += _W
+                continue
+            i += Int(count_trailing_zeros(m))
+        elif i >= end:
+            return end
+        var c = p[unsafe_offset=i]
+        if c == _BSLASH:
+            i += 2
+            continue
+        if c == _QUOTE:
+            return i + 1
+        i += 1
+
+
+def _skip_value_fast(b: Span[UInt8, _], var i: Int, end: Int) -> Int:
+    """`skip_value`, stepping over runs of bytes that can't open, close or
+    quote anything sixteen at a time."""
+    if i >= end:
+        return end
+    var p = b.unsafe_ptr()
+    var c = p[unsafe_offset=i]
+    if c == _QUOTE:
+        return _skip_string_fast(b, i, end)
+    if c != _LBRACE and c != _LBRACK:
+        return skip_value(b, i, end)
+    var depth = 0
+    while i < end:
+        if i + _W <= end:
+            var v = p.unsafe_load[width=_W](i)
+            var m = pack_bits[dtype=DType.uint16](
+                v.eq(_V(_QUOTE))
+                | v.eq(_V(_LBRACE))
+                | v.eq(_V(_RBRACE))
+                | v.eq(_V(_LBRACK))
+                | v.eq(_V(_RBRACK))
+            )
+            if m == 0:
+                i += _W
+                continue
+            i += Int(count_trailing_zeros(m))
+        c = p[unsafe_offset=i]
+        if c == _QUOTE:
+            i = _skip_string_fast(b, i, end)
+            continue
+        if c == _LBRACE or c == _LBRACK:
+            depth += 1
+        elif c == _RBRACE or c == _RBRACK:
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return end
+
+
+@fieldwise_init
+struct EventFields(Copyable, ImplicitlyCopyable, Movable):
+    """Where an event's stored fields are in its line."""
+
+    var id: Range
+    var type: Range
+    var created_at: Range
+    var repo_name: Range
+    var actor_login: Range
+    var payload: Range
+
+
+@always_inline
+def _is(b: Span[UInt8, _], ks: Int, ke: Int, key: StaticString) -> Bool:
+    return _key_is(b, ks, ke, key)
+
+
+def scan_event(b: Span[UInt8, _], line: Range) -> EventFields:
+    """`field(line, "id")`, `"type"`, `"created_at"`, `"payload"`,
+    `path(line, "repo", "name")` and `path(line, "actor", "login")` in one
+    walk of the line's top-level object, with `field`'s rules: the first
+    occurrence of a key wins, and a malformed object ends the walk."""
+    var none = Range(-1, -1)
+    var out = EventFields(none, none, none, none, none, none)
+    var end = line.end
+    var i = skip_ws(b, line.start, end)
+    if i >= end or b[i] != _LBRACE:
+        return out
+    var repo = none
+    var actor = none
+    i += 1
+    while i < end:
+        i = skip_ws(b, i, end)
+        if i >= end or b[i] == _RBRACE:
+            break
+        if b[i] == _COMMA:
+            i += 1
+            continue
+        if b[i] != _QUOTE:
+            break
+        var ks = i
+        i = _skip_string_fast(b, i, end)
+        var ke = i
+        i = skip_ws(b, i, end)
+        if i >= end or b[i] != _COLON:
+            break
+        i = skip_ws(b, i + 1, end)
+        var vs = i
+        i = _skip_value_fast(b, i, end)
+        var v = Range(vs, i)
+        var klen = ke - ks - 2
+        if klen == 2:
+            if not out.id.found() and _is(b, ks, ke, "id"):
+                out.id = v
+        elif klen == 4:
+            if not out.type.found() and _is(b, ks, ke, "type"):
+                out.type = v
+            elif not repo.found() and _is(b, ks, ke, "repo"):
+                repo = v
+        elif klen == 5:
+            if not actor.found() and _is(b, ks, ke, "actor"):
+                actor = v
+        elif klen == 7:
+            if not out.payload.found() and _is(b, ks, ke, "payload"):
+                out.payload = v
+        elif klen == 10:
+            if not out.created_at.found() and _is(b, ks, ke, "created_at"):
+                out.created_at = v
+    if repo.found():
+        out.repo_name = field(b, repo, "name")
+    if actor.found():
+        out.actor_login = field(b, actor, "login")
+    return out
 
 
 def path(b: Span[UInt8, _], obj: Range, a: StringSlice, c: StringSlice) -> Range:

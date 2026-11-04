@@ -376,6 +376,48 @@ an hour or needs reading library source), **low** (friction).
   skill that workers can write data files a step commits, with
   `load_dataset` on the worker.
 
+## 22. json_mlake's simdjson path doesn't fit a scan for a few fields (low)
+
+- **Tried:** json_mlake 0.4.3's simdjson FFI (`json.cpu.simdjson_ffi`,
+  installed with flare) against the hand-written scanner in
+  `src/jscan.mojo`, on an hour of GH Archive (491 MB, 142,347 lines).
+- **Happened:** `SimdjsonFFI.parse` takes a `String`, so each line is
+  copied first, and the DOM it builds has no way back to a value's bytes
+  as written, which the `payload` column needs. Just parsing each line and
+  walking its top-level keys ran at 457 MB/s; the old scanner, which found
+  each of the six fields with its own `field` call (skipping the payload
+  several times), ran at 494 MB/s.
+- **Did instead:** `scan_event`: one walk of the line's top-level object
+  that finds all six fields, stepping over string contents and nested
+  values sixteen bytes at a time (`pack_bits` + `count_trailing_zeros`),
+  and builds the Arrow columns directly instead of a `List[Datum]` per
+  column. Parsing an hour fell from 1.10 s to 0.32 s (~1.5 GB/s), rows
+  unchanged.
+- **Fix:** json_mlake: a span-returning scan (`Span` input, value ranges
+  out, like simdjson's on-demand `raw_json()`), or its stage-1
+  structural index exposed, so callers can skip what they don't need.
+  iceberg-mojo: a `ColumnBuilder` that appends bytes and integers without
+  a `Datum` per cell.
+
+## 23. Writing a batch through iceberg-mojo peaks at ~10x the batch (medium)
+
+- **Happened:** one hour written as 50,000-row batches (~150 MB of
+  payload each) peaks at 1.86 GB RSS in the worker; as 20,000-row
+  batches, 1.0 GB, with gunzip and parsing needing ~150 MB. In
+  `write_data_files` each batch is copied by `align_batch`
+  (`subtree_copy`, then `cast_column`), again by `aligned[k].copy()` for
+  an unpartitioned group, again by `write_parquet`'s `subtree_copy`, then
+  encoded, compressed, returned as one `List[UInt8]`, and copied once
+  more by `data_file_from_parquet` (`ParquetReader(data.copy())`) to read
+  the footer back.
+- **Did instead:** kept 50,000-row batches, so the files are as before;
+  peak RSS is that of the writer.
+- **Fix:** iceberg-mojo: move columns through `align_batch` when they
+  already match the schema, skip the copy for a single group, build the
+  `DataFile` from the writer's own metadata rather than re-reading the
+  bytes; parquet.mojo: stream row groups to the output instead of
+  holding the whole file.
+
 ---
 
 ## What the local run did, the orca way (orca 0.3.1)
