@@ -59,6 +59,7 @@ main{flex:1;padding:32px 0 48px}
 h1{font-size:28px;font-weight:700;letter-spacing:-.02em;line-height:1.15;margin:0 0 8px;overflow-wrap:anywhere}
 h2{font-size:18px;font-weight:600;letter-spacing:-.01em;margin:36px 0 12px}
 .lead{color:var(--muted);max-width:72ch;margin:0 0 20px}
+.sub{color:var(--muted);font-size:14px;margin:-4px 0 14px}
 .tbl{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
 @media (max-width:1200px){.tbl{overflow-x:auto}.tbl th{position:static}}
 table{border-collapse:separate;border-spacing:0;width:100%;font-size:14px}
@@ -116,23 +117,36 @@ def _nav(href: String, label: String, current: Bool) -> String:
     )
 
 
+comptime BRAND = "Mojo census"
+
+comptime DESCRIPTION = (
+    "Mojo libraries, versions and growth, counted from GH Archive by"
+    " magmalake. An independent project, not affiliated with Modular."
+)
+
+
 def _page(title: String, var body: String, section: String) raises -> Response:
     """The page around `body`; `section` is `libraries` or `versions`, the
-    nav entry to light up."""
+    nav entry to light up. An empty `title` is the home page, titled with
+    the brand alone; others read "<title> · Mojo census"."""
+    var full = String(BRAND) if title == "" else String(title, " · ", BRAND)
     var h = String(
         "<!doctype html><html lang=en><head><meta charset=utf-8>",
         "<meta name=viewport content='width=device-width,initial-scale=1'>",
         "<meta name=color-scheme content='light dark'>",
-        "<title>", html_escape(title), " - Mojo libraries</title><style>", STYLE, "</style></head><body>",
-        "<header class=top><div class=wrap><a class=brand href='/'>", MARK, "Mojo libraries</a>",
+        "<meta name=description content='", html_escape(DESCRIPTION), "'>",
+        "<title>", html_escape(full), "</title><style>", STYLE, "</style></head><body>",
+        "<header class=top><div class=wrap><a class=brand href='/'>", MARK, BRAND, "</a>",
         "<nav>", _nav("/", "Libraries", section == "libraries"),
         _nav("/versions", "Versions", section == "versions"),
         "<span class=sep aria-hidden=true></span>",
         "<a href='https://mlake.dev' rel=noopener>mlake.dev<span class=arrow> &#8599;</span></a></nav></div></header>",
         "<main><div class=wrap>", body, "</div></main>",
-        "<footer><div class=wrap><p>Data from <a href='https://www.gharchive.org' rel=noopener>GH Archive</a>,",
-        " read by the gharchive.example pipelines on orca: the hour's public GitHub events, the",
-        " repositories with Mojo in them, and what their lock files say at each commit.</p>",
+        "<footer><div class=wrap><p>An independent project; Mojo is a trademark of Modular Inc.",
+        " Data from <a href='https://www.gharchive.org' rel=noopener>GH Archive</a>, read by the",
+        " census pipelines on <a href='https://orca.mlake.dev' rel=noopener>orca</a>: the hour's",
+        " public GitHub events, the repositories with Mojo in them, and what their lock files",
+        " say at each commit.</p>",
         "<nav><a href='https://mlake.dev' rel=noopener>mlake.dev</a>",
         "<a href='https://github.com/magmalake' rel=noopener>GitHub</a>",
         "<a href='/api/repos'>JSON</a></nav></div></footer></body></html>",
@@ -210,7 +224,8 @@ def index(req: Request) raises -> Response:
         var libs = libraries()
         var today = _now_days()
         var h = String(
-            "<h1>Mojo libraries</h1><p class=lead>", len(libs),
+            "<h1>Mojo libraries</h1><p class=sub>Mojo libraries, versions and growth, counted",
+            " from GH Archive by magmalake. Not affiliated with Modular.</p><p class=lead>", len(libs),
             " repositories found in GH Archive, biggest first. Size is lines of",
             " Mojo at the last commit read; age is since GitHub created the",
             " repository.</p>",
@@ -224,7 +239,7 @@ def index(req: Request) raises -> Response:
                     " so this page fills in as they catch up.",
                 )
             )
-            return _page("Mojo libraries", h^, "libraries")
+            return _page("", h^, "libraries")
         h.write(
             "<div class=tbl><table><thead><tr><th>Repository</th>",
             "<th class=num>Lines of Mojo</th><th class=num>Files</th>",
@@ -244,7 +259,7 @@ def index(req: Request) raises -> Response:
                 "</td><td class='mute soft'>", html_escape(l.found_by), "</td></tr>",
             )
         h.write("</tbody></table></div>")
-        return _page("Mojo libraries", h^, "libraries")
+        return _page("", h^, "libraries")
     except e:
         return internal_error(String(e))
 
@@ -295,7 +310,7 @@ def versions(req: Request) raises -> Response:
                     " The lake is still filling.",
                 )
             )
-            return _page("Mojo versions", h^, "versions")
+            return _page("Versions", h^, "versions")
         # The month cell spans its rows; the bar is against the busiest row.
         var per_month = Dict[String, Int]()
         var top = 1
@@ -321,7 +336,7 @@ def versions(req: Request) raises -> Response:
                 "%' aria-hidden=true></i></div></td></tr>",
             )
         h.write("</tbody></table></div>")
-        return _page("Mojo versions", h^, "versions")
+        return _page("Versions", h^, "versions")
     except e:
         return internal_error(String(e))
 
