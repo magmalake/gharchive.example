@@ -2,7 +2,7 @@
 preview = ["pixi-build"]
 authors = ["Marius S <39998+winding-lines@users.noreply.github.com>"]
 channels = ["https://conda.modular.com/max", "conda-forge"]
-name = "gharchive.example"
+name = "mojo-census"
 platforms = ["osx-arm64", "linux-aarch64"]
 version = "0.1.0"
 

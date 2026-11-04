@@ -11,7 +11,7 @@ from std.os.path import exists
 from flare.http import HttpClient, Request, Response
 from flare.tls import TlsConfig
 
-comptime USER_AGENT = "gharchive.example (magmalake)"
+comptime USER_AGENT = "mojo-census (magmalake)"
 
 
 def _ca_bundle() -> String:
