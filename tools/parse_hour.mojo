@@ -8,7 +8,7 @@ from std.sys import argv
 from std.time import perf_counter_ns
 
 from events import parse_events
-from gz import gunzip
+from deflate import gunzip
 
 
 def main() raises:

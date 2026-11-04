@@ -4,9 +4,8 @@ A sensor: each day gharchive commits starts a run for that day. The step
 reads the day's events, collects candidates (`detect.scan_event`), asks
 GitHub about the ones it hasn't asked about before (`detect.verify`), and
 appends the Mojo ones to `mojo.repos` and every answer to `mojo.checked`.
-It also appends the new repositories' keys to `mojo.repo_keys`, which
-mojo_history is keyed on (see `lake.REPO_KEYS` for why that table is
-written outside `orca.tables`).
+mojo_history is keyed on `mojo.repos`' `repo` column, so each snapshot of
+it starts mojo_history for the repositories it adds.
 
 GitHub allows 60 API requests an hour without a token, so a run checks at
 most `MOJO_REPOS_BUDGET` candidates (default 25, or 1000 with
@@ -29,11 +28,9 @@ from detect import Candidate, Verdict, scan_event, verify
 from jscan import days_from_civil
 from lake import (
     CHECKED,
-    append_keys,
     EVENTS,
     REPOS,
     checked_schema,
-    repo_key,
     repos_schema,
     str_or_null,
     ts,
@@ -168,8 +165,7 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
     var c_desc = ColumnBuilder.of(rs, 9)
     var c_size = ColumnBuilder.of(rs, 10)
     var c_lang = ColumnBuilder.of(rs, 11)
-    var c_key = ColumnBuilder.of(rs, 12)
-    var c_fork = ColumnBuilder.of(rs, 13)
+    var c_fork = ColumnBuilder.of(rs, 12)
     var k_repo = ColumnBuilder.of(cs, 1)
     var k_at = ColumnBuilder.of(cs, 2)
     var k_out = ColumnBuilder.of(cs, 3)
@@ -211,7 +207,6 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
                     c_desc.add(str_or_null(v.info.description))
                     c_size.add(Datum.long_(v.info.size_kb))
                     c_lang.add(str_or_null(v.info.language))
-                    c_key.add(Datum.string_(repo_key(v.info.repo)))
                     c_fork.add(Datum.bool_(v.info.fork))
                     added += 1
                 if v.remaining == 0:
@@ -227,14 +222,8 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
         k_first.add(ts(c.first_seen))
         k_sha.add(str_or_null(c.sha))
     if added > 0:
-        var id = append(ctx, repos_t, [batch_of([c_repo^, c_created^, c_first^, c_found^, c_stars^, c_forks^, c_license^, c_branch^, c_desc^, c_size^, c_lang^, c_key^, c_fork^])])
+        var id = append(ctx, repos_t, [batch_of([c_repo^, c_created^, c_first^, c_found^, c_stars^, c_forks^, c_license^, c_branch^, c_desc^, c_size^, c_lang^, c_fork^])])
         ctx.log(String(added, " Mojo repositories added, snapshot ", id))
-        # mojo_history's keys, written outside orca.tables (see lake.REPO_KEYS).
-        var new_repos = List[String]()
-        for e in added_names.items():
-            new_repos.append(e.key)
-        var kid = append_keys(new_repos)
-        ctx.log(String(len(new_repos), " keys for mojo_history, mojo.repo_keys snapshot ", kid))
     if len(k_repo) > 0:
         _ = append(ctx, checked_t, [batch_of([k_repo^, k_at^, k_out^, k_sig^, k_how^, k_first^, k_sha^])])
     return added

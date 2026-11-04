@@ -1,7 +1,8 @@
 """The mojo_history pipeline: each Mojo repository's history.
 
-Keyed by the `key` column of `mojo.repo_keys` (`owner:name`), 50 repositories a run, and a
-sensor, so new repositories start runs. The run's one step is a gather over
+Keyed by the `repo` column of `mojo.repos` (`owner/name`), 50 repositories
+a run, and a sensor, so each snapshot mojo_repos commits starts runs for the
+repositories it adds. The run's one step is a gather over
 its keys: it sends every repository to a dista task (`read_history`: a
 bare clone and one `git log`), then appends what comes back to
 `mojo.commits` and `mojo.migrations` as one snapshot each.
@@ -18,7 +19,7 @@ from iceberg.batch import ColumnBuilder, batch_of
 from iceberg.values import Datum
 from orca import Ctx, Gather, Name, Pipeline, Step, Tasks, orca_main
 from orca.keyed import Keyed
-from orca.tables import append, ensure_table, load_dataset, table
+from orca.tables import append, ensure_table, scan, table
 
 from cols import col, i64_at, str_at
 from history import History, read_history
@@ -26,9 +27,7 @@ from lake import (
     COMMITS,
     MIGRATIONS,
     REPOS,
-    REPO_KEYS,
     commits_schema,
-    key_repo,
     migrations_schema,
     str_or_null,
     ts,
@@ -39,15 +38,12 @@ comptime ReadHistory = Task[String, History, read_history]
 comptime HistoryTasks = Tasks[ReadHistory]
 
 
-def _sizes() raises -> Dict[String, Int64]:
-    """`size_kb` of every repository in mojo.repos.
-
-    Read with `load_dataset`, outside the step's declared reads: declaring
-    `reads=[REPOS]` makes registration refuse this keyed sensor, because
-    mojo_repos (daily) writes mojo.repos (see GAPS.md). Not pinned, so a
-    retry may see newer sizes; they only decide what's skipped."""
+def _sizes(mut ctx: Ctx) raises -> Dict[String, Int64]:
+    """`size_kb` of every repository in mojo.repos, at the step's pinned
+    snapshot (a declared read, so lineage runs back to gharchive.events)."""
     var out = Dict[String, Int64]()
-    for b in load_dataset(REPOS).scan().select(["repo", "size_kb"]).to_batches():
+    var t = table(ctx, REPOS)
+    for b in scan(ctx, t).select(["repo", "size_kb"]).to_batches():
         var ir = col(b, "repo")
         var isz = col(b, "size_kb")
         for r in range(b.num_rows):
@@ -70,14 +66,14 @@ def _done(mut ctx: Ctx) raises -> Dict[String, Bool]:
 def histories(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
     var commits_t = ensure_table(ctx, COMMITS, commits_schema())
     var migrations_t = ensure_table(ctx, MIGRATIONS, migrations_schema())
-    var sizes = _sizes()
+    var sizes = _sizes(ctx)
     var done = _done(ctx)
     var max_kb = Int64(Int(getenv("MOJO_HISTORY_MAX_KB", "0")))
     ref rt = ctx.runtime[HistoryTasks]()
     var names = List[String]()
     var refs = List[ObjectRef[History]]()
     for i in range(len(keys)):
-        var repo = key_repo(keys.items[i].text)
+        var repo = keys.items[i].text
         if repo in done:
             ctx.log(String(repo, ": already in mojo.commits, skipped"))
             continue
@@ -155,13 +151,14 @@ comptime Histories = Step[
     histories,
     Gather,
     retries=1,
+    reads=[REPOS],
     writes=[COMMITS, MIGRATIONS],
 ]
 comptime MojoHistory = Pipeline[
     "mojo_history",
     Histories,
     tasks=HistoryTasks,
-    partitions=Keyed[REPO_KEYS, "key"],  # owner:name; see lake.REPO_KEYS
+    partitions=Keyed[REPOS, "repo"],  # owner/name
     keys_per_run=50,
     sensor=True,
     workers=4,

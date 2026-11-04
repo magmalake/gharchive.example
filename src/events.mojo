@@ -7,7 +7,7 @@ from iceberg.values import Datum
 from parquet import RecordBatch
 
 from fetch import get_bytes
-from gz import gunzip
+from deflate import gunzip
 from jscan import Range, field, path, raw, text, timestamp_micros
 from lake import events_schema, str_or_null, ts
 

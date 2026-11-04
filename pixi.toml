@@ -19,27 +19,27 @@ test = "mojo run -I src tests/test_versions.mojo && mojo run -I src tests/test_h
 
 [dependencies]
 mojo-compiler = "==1.2.0"
-json_mlake = { git = "https://github.com/magmalake/json_mlake.git", rev = "d850b1c90487e1e9a88ac87d1c1d7f53ffba7276" }
+json_mlake = { git = "https://github.com/magmalake/json_mlake.git", rev = "bcaa7161e757748a1310a213e123bf8810ff7e96" }
 threads-mojo = { git = "https://github.com/magmalake/threads.mojo.git", rev = "f45e780a8de77278c140cee36904e46e93e0ca1c" }
-flare_mlake = { git = "https://github.com/magmalake/flare_mlake.git", rev = "0cb5005489bb1af57ca0421b8f0fcd206bbacf42" }
-k8s-mojo = { git = "https://github.com/magmalake/k8s.mojo.git", rev = "6195cfd61250263720ada0293a0096ee50e3e437" }
+flare_mlake = { git = "https://github.com/magmalake/flare_mlake.git", rev = "541259f938dd2913f691a8facc06882fb8f47ca0" }
+k8s-mojo = { git = "https://github.com/magmalake/k8s.mojo.git", rev = "aa5eb7971284255bde3af8d799c213776ae92a9b" }
 memory-region-mojo = { git = "https://github.com/magmalake/memory-region.mojo.git", rev = "40068c4f95ea659e9b78aa91ced45420b07e3e6e" }
 arrow-mlake-mojo = { git = "https://github.com/magmalake/arrow-mlake.mojo.git", rev = "178aae6e0da0dbe105f9cb02632a51cfd35b9dda" }
-objectstore-mojo = { git = "https://github.com/magmalake/objectstore.mojo.git", rev = "58488efa729351f5894b45a0a92e898171c2e96d" }
-dista-mojo = { git = "https://github.com/magmalake/dista.mojo.git", rev = "ca915f1a79c6f3dfd6f3fa00dfa729eb21f46250" }
-postgres-mojo = { git = "https://github.com/magmalake/postgres.mojo", rev = "bfe9b94ae97e3e184dc6d118b0684818927a5da8" }
-brotli-mojo = { git = "https://github.com/magmalake/brotli.mojo.git", rev = "aa6d14985baf82ad4b934f14136b95a291b55faf" }
+objectstore-mojo = { git = "https://github.com/magmalake/objectstore.mojo.git", rev = "41fac2800882e5a64da09729262dfa22bbd4ad13" }
+dista-mojo = { git = "https://github.com/magmalake/dista.mojo.git", rev = "9e4839937d82f36893285301bf9ce4338dcb14ec" }
+postgres-mojo = { git = "https://github.com/magmalake/postgres.mojo", rev = "324b2bb61e2e80327654abecf70fd4b2defbc50d" }
+brotli-mojo = { git = "https://github.com/magmalake/brotli.mojo.git", rev = "dcbf840d22e3deaf24c587d12d28570a9a882b7f" }
 thrift-mojo = { git = "https://github.com/magmalake/thrift.mojo.git", rev = "21cdbce67d22d72e88e88a60e2f168b05b4ef9fa" }
-lz4-mojo = { git = "https://github.com/magmalake/lz4.mojo.git", rev = "64502eeeabed37515cd479bc421fc2920504cac5" }
-zstd-mojo = { git = "https://github.com/magmalake/zstd.mojo.git", rev = "53655623ca8585fd5b36b1239842913ec308ae69" }
+lz4-mojo = { git = "https://github.com/magmalake/lz4.mojo.git", rev = "23cd6e54967d7e41573371507228ca5c958ca685" }
+zstd-mojo = { git = "https://github.com/magmalake/zstd.mojo.git", rev = "76190bb31012cd2d2f6712c4e1724a66474215db" }
 snappy-mojo = { git = "https://github.com/magmalake/snappy.mojo.git", rev = "b8172ed0a4ef13911cc225d46e26676a5b8f1ccd" }
-parquet-full-mojo = { git = "https://github.com/magmalake/parquet.mojo.git", rev = "210ece6d7744ae1a3abccb76d7ad161b9b0aa975", subdirectory = "full" }
-deflate-mojo = { git = "https://github.com/magmalake/deflate.mojo.git", rev = "aeb571e54ac736b97c826a23f44501715fddc656" }
-sqlite-mojo = { git = "https://github.com/magmalake/sqlite.mojo.git", rev = "53b819cd395b1b0afe8772dfbb43489da6ce939e" }
-avro-mojo = { git = "https://github.com/magmalake/avro.mojo.git", rev = "479c9d390b5c12c2497e05f84b64bf690a8cfea3" }
+parquet-full-mojo = { git = "https://github.com/magmalake/parquet.mojo.git", rev = "c15f51aee06ccf73102810e7de143745abba6c90", subdirectory = "full" }
+deflate-mojo = { git = "https://github.com/magmalake/deflate.mojo.git", rev = "6639b18c58fad0e009f4224ec9f792cd919398b4" }
+sqlite-mojo = { git = "https://github.com/magmalake/sqlite.mojo.git", rev = "0d76aa7b672c85580f4d8c5de855772bc972d535" }
+avro-mojo = { git = "https://github.com/magmalake/avro.mojo.git", rev = "db833d86ddbd7cbaba4dbd79377b0a06009181ec" }
 roaring-mojo = { git = "https://github.com/magmalake/roaring.mojo.git", rev = "a90a7bd30cf1c21403a29059282072e93fbeeee2" }
 hashes-mojo = { git = "https://github.com/magmalake/hashes.mojo.git", rev = "395aca597f9410bd0511df44d972f14b10a8b01d" }
-iceberg-mojo = { git = "https://github.com/magmalake/iceberg.mojo.git", rev = "d788c877b3d05f9be6a34946ec1f87a35a38170f" }
-orca-mojo = { git = "https://github.com/magmalake/orca.mojo.git", rev = "e1a385907db56012dd4bbe6649538dc9df0299c4" }
+iceberg-mojo = { git = "https://github.com/magmalake/iceberg.mojo.git", rev = "ec4f4e07605b687a2ea9e2fda5dfd4a01aa6ba97" }
+orca-mojo = { git = "https://github.com/magmalake/orca.mojo.git", rev = "55e13c2d5768f6816b6a364df3e160adfb2a3b6a" }
 postgresql = ">=18.4,<19"
 git = ">=2.56.0,<3"
