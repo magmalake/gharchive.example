@@ -325,6 +325,151 @@ an hour or needs reading library source), **low** (friction).
   tzdata, zlib, ...), not the tins and their pinned versions.
 - **Fix:** mojoshelf: list only the tins, with version and rev.
 
+## 20. deflate-mojo can't inflate a stream a window at a time (medium)
+
+- **Tried:** to decode an hour of GH Archive (one gzip member, ~65 MB in,
+  ~500 MB of JSON out) a window at a time, parsing lines as they come, so
+  the hour's JSON is never in memory whole.
+- **Happened:** deflate-mojo 0.1.3 has `gunzip`, `gunzip_at`, `inflate`
+  and `inflate_at`, all of which return the whole output. GH Archive's
+  files are single-member, so decoding member by member doesn't help. The
+  decoder's state (`_BitReader`, `_Out`, the block loop in `_inflate_into`)
+  isn't public or resumable.
+- **Did instead:** `src/gzstream.mojo`, `GzipInflater`: deflate-mojo's
+  Huffman decoding with its state kept between calls. `run(data,
+  complete, want)` inflates blocks until the window holds `want` bytes;
+  `compact` drops what the caller used, keeping the 32 KiB back-references
+  reach. The input may still be arriving: a block that runs past it is
+  rolled back and decoded again later. It also copies matches eight bytes
+  at a time where the distance allows, rather than byte by byte. An hour
+  now decodes and parses in 1.48 s instead of 0.58 + 1.09 s, and a
+  worker's peak RSS fell (see the PR).
+- **Fix:** deflate-mojo: a public streaming decoder (`Inflater` /
+  `GzipReader` with `feed`/`read_into` or `run`/`compact` like this one),
+  and the eight-byte match copy in `_Out.copy_match`.
+
+## 21. Writing data files on a dista worker: no codec for `DataFile`, no "append these files" in orca (medium)
+
+- **Tried:** to have each hour's dista task write its Parquet files into
+  `gharchive.events` on the worker and send back only their entries, so
+  the step commits metadata instead of receiving ~450 MB of Arrow per
+  hour over IPC and writing it on one core.
+- **Happened:** iceberg-mojo's `write_data_files` returns
+  `List[DataFile]`, but `DataFile` (and `Datum`, `ColumnMetrics` in it)
+  hold `List`s, which dista's reflection codec refuses, and iceberg has no
+  serialised form short of a manifest. `orca.tables.append` only takes
+  batches; neither the orca skill nor `tables.mojo` mentions committing
+  files written elsewhere.
+- **Did instead:** `src/datafiles.mojo`: `DataFiles`, a dista `Codec`
+  that encodes every `DataFile` field by hand, and `TableWriter`, which
+  writes each 50,000-row batch as soon as the parser fills it. The worker
+  gets the table with `orca.tables.load_dataset` (workers have
+  `ORCA_WAREHOUSE` on AWS too); the step commits with `orca.tables.commit(ctx,
+  table, "append", FileChanges)`, which checks `find_commit` first, so the
+  retry rule is unchanged. Six hours at PARALLEL=4: 7.8 -> 4.5 s, and a
+  commit is ~1 ms. Files of an hour whose task finished but whose step
+  died before committing are left as orphans (as an interrupted `append`
+  already could).
+- **Fix:** iceberg-mojo: `DataFile.encode`/`decode` (or a dista `Codec`
+  in a small bridge), so file lists cross processes; orca:
+  `append_files(ctx, table, files)` next to `append`, and a line in the
+  skill that workers can write data files a step commits, with
+  `load_dataset` on the worker.
+
+## 22. json_mlake's simdjson path doesn't fit a scan for a few fields (low)
+
+- **Tried:** json_mlake 0.4.3's simdjson FFI (`json.cpu.simdjson_ffi`,
+  installed with flare) against the hand-written scanner in
+  `src/jscan.mojo`, on an hour of GH Archive (491 MB, 142,347 lines).
+- **Happened:** `SimdjsonFFI.parse` takes a `String`, so each line is
+  copied first, and the DOM it builds has no way back to a value's bytes
+  as written, which the `payload` column needs. Just parsing each line and
+  walking its top-level keys ran at 457 MB/s; the old scanner, which found
+  each of the six fields with its own `field` call (skipping the payload
+  several times), ran at 494 MB/s.
+- **Did instead:** `scan_event`: one walk of the line's top-level object
+  that finds all six fields, stepping over string contents and nested
+  values sixteen bytes at a time (`pack_bits` + `count_trailing_zeros`),
+  and builds the Arrow columns directly instead of a `List[Datum]` per
+  column. Parsing an hour fell from 1.10 s to 0.32 s (~1.5 GB/s), rows
+  unchanged.
+- **Fix:** json_mlake: a span-returning scan (`Span` input, value ranges
+  out, like simdjson's on-demand `raw_json()`), or its stage-1
+  structural index exposed, so callers can skip what they don't need.
+  iceberg-mojo: a `ColumnBuilder` that appends bytes and integers without
+  a `Datum` per cell.
+
+## 23. Writing a batch through iceberg-mojo peaks at ~10x the batch (medium)
+
+- **Happened:** one hour written as 50,000-row batches (~150 MB of
+  payload each) peaks at 1.86 GB RSS in the worker; as 20,000-row
+  batches, 1.0 GB, with gunzip and parsing needing ~150 MB. In
+  `write_data_files` each batch is copied by `align_batch`
+  (`subtree_copy`, then `cast_column`), again by `aligned[k].copy()` for
+  an unpartitioned group, again by `write_parquet`'s `subtree_copy`, then
+  encoded, compressed, returned as one `List[UInt8]`, and copied once
+  more by `data_file_from_parquet` (`ParquetReader(data.copy())`) to read
+  the footer back.
+- **Did instead:** kept 50,000-row batches, so the files are as before;
+  peak RSS is that of the writer.
+- **Fix:** iceberg-mojo: move columns through `align_batch` when they
+  already match the schema, skip the copy for a single group, build the
+  `DataFile` from the writer's own metadata rather than re-reading the
+  bytes; parquet.mojo: stream row groups to the output instead of
+  holding the whole file.
+
+## 24. deflate-mojo inflates at ~60% of libdeflate's speed; libdeflate is a candidate backend (medium)
+
+- **Tried:** to make gunzip faster, comparing on one hour (70 MB in,
+  491 MB out, M-series Mac) deflate-mojo 0.1.3's `gunzip` (575 ms), this
+  app's streaming inflater before and after tuning (380 ms, 331 ms, both
+  with the CRC-32, which is ~55 ms of it), zlib 1.3.2's streaming
+  `inflate` (445 ms) and libdeflate 1.26's whole-buffer
+  `libdeflate_gzip_decompress` (180-225 ms). libdeflate and zlib are
+  already in the environment (flare_mlake depends on libdeflate, for gzip
+  responses); no magmalake tin wraps libdeflate's decompressor.
+- **Happened:** libdeflate is fastest but only decodes a whole buffer into
+  a whole buffer: it would bring back the ~500 MB of JSON per hour per
+  worker that streaming removed, and the decode couldn't start before the
+  download ended. For ~130 ms an hour (about 9% of an hour's CPU here) that
+  isn't a clear win, so the app doesn't call it.
+- **Did instead:** tuned the app's inflater: one bit-buffer refill per
+  symbol with unchecked reads while 8 bytes of input remain, a second
+  literal from the same refill, a 10-bit first-level table, Huffman tables
+  rebuilt in place rather than allocated per block, and 16-byte match
+  copies when the distance allows (380 -> 331 ms an hour).
+- **Fix:** deflate-mojo: these decoder changes; and for callers that hold
+  the whole output anyway and know its size (Parquet GZIP pages, Avro
+  deflate blocks, `gunzip` itself via ISIZE), an optional libdeflate
+  backend, or libdeflate's tricks (combined length/extra tables,
+  multi-literal decode) in Mojo.
+
+## 25. Overlapping a download with its decode takes a hand-made thread (low)
+
+- **Tried:** to decode each hour while it downloads, so an hour costs
+  max(download, decode) instead of their sum (17-29 MB/s from
+  data.gharchive.org is 2.2-3.8 s an hour; decoding and writing one is
+  now ~1 s).
+- **Happened:** flare 0.13.2's `HttpClient.send_streaming` /
+  `HttpStreamResponse.read_chunk` stream a body, but a single thread that
+  alternates reading and decoding only overlaps as much as the socket
+  buffer holds. Nothing in the skills or tins does "read this body on
+  another thread into a buffer I can watch": threads-mojo gives
+  `ThreadHandle.spawn` over a thin `def(OpaquePtr)` and atomics, so the
+  shared state is a heap struct by address. `read_chunk` returns a new
+  `List` per call, which is then copied into the buffer.
+- **Did instead:** `fetch.Download`: the response moves to a heap
+  `_Shared` with a buffer sized from `Content-Length`; a reader thread
+  copies chunks in and release-stores how much has arrived; the task's
+  thread inflates what is there (the inflater rolls back a block that
+  outruns it) and polls when it needs more. Without `Content-Length` the
+  body is read whole first. At 25 MB/s per connection, six hours: PARALLEL=1
+  23.8 -> 17.2 s (the downloads alone are ~16.8 s), PARALLEL=4 8.0 -> 5.7 s.
+- **Fix:** flare: `read_chunk_into(buf, at)` (no allocation per chunk),
+  and a `Body` that fills a buffer on its own thread with `available()` /
+  `wait(n)`; threads-mojo: a typed `spawn` over an owned value, as
+  `TypedPool` does for pools.
+
 ---
 
 ## What the local run did, the orca way (orca 0.3.1)

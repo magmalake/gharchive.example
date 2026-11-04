@@ -1,10 +1,13 @@
 """The gharchive pipeline: each day of GH Archive into `gharchive.events`.
 
 Daily from 2023-01-01, at 03:00 UTC for the day before. A day's step fans
-its hours out as dista tasks (download, gunzip, parse), at most `workers`
-at a time so a day never sits in memory whole, and appends each hour as it
-comes back. An hour is one snapshot; a retried step finds the hours its
-earlier attempt committed and skips them without downloading again.
+its hours out as dista tasks, at most `GHARCHIVE_PARALLEL` at a time. A
+task streams its hour in on a reader thread while it gunzips and parses
+what has arrived, a window at a time, and writes the Parquet data files
+into the table itself; it sends back only
+their entries, which the step commits, an hour as one append, in hour
+order. An hour is one snapshot; a retried step finds the hours its earlier
+attempt committed and skips them without downloading again.
 
     GHARCHIVE_HOURS=16-17 ./build/gharchive run --partitions 2025-09-15
 
@@ -13,21 +16,25 @@ trying it locally.
 """
 
 from std.os import getenv, setenv
+from std.time import perf_counter_ns
 
-from dista import ObjectRef, Seq, Task2
+from dista import ObjectRef, Task2
+from iceberg.commit import FileChanges
 from orca import Cron, Ctx, Daily, Day, Mapped, Pipeline, Step, Tasks, orca_main
-from orca.tables import append, ensure_table, find_commit
+from orca.tables import append, commit, ensure_table, find_commit, load_dataset
 from parquet import RecordBatch
 
+from datafiles import DataFiles
 from events import fetch_hour, parse_hours
 from lake import EVENTS, events_schema, events_spec
 
 
-def hour_task(day: String, hour: Int) raises -> Seq[RecordBatch]:
-    return Seq[RecordBatch](fetch_hour(day, hour))
+def hour_task(day: String, hour: Int) raises -> DataFiles:
+    """On a worker: the hour, written into the table but not committed."""
+    return fetch_hour(day, hour, load_dataset(EVENTS))
 
 
-comptime Hour = Task2[String, Int, Seq[RecordBatch], hour_task]
+comptime Hour = Task2[String, Int, DataFiles, hour_task]
 comptime GhTasks = Tasks[Hour]
 
 
@@ -47,7 +54,7 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
     if done > 0:
         ctx.log(String(day, ": ", done, " hours already committed"))
 
-    var refs = List[ObjectRef[Seq[RecordBatch]]]()
+    var refs = List[ObjectRef[DataFiles]]()
     var next = done
     while next < len(hours) and next - done < window:
         refs.append(rt.remote[Hour](day, hours[next]))
@@ -59,12 +66,26 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
         if next < len(hours):
             refs.append(rt.remote[Hour](day, hours[next]))
             next += 1
-        var n = 0
-        for b in got.items:
-            n += b.num_rows
-        var id = append(ctx, table, got.items)
-        rows += Int64(n)
-        ctx.log(String(day, " hour ", hours[i], ": ", n, " events, snapshot ", id))
+        var t0 = perf_counter_ns()
+        var id: Int64
+        if len(got.files) == 0:
+            id = append(ctx, table, List[RecordBatch]())
+        else:
+            var changes = FileChanges()
+            changes.added_data = got.files.copy()
+            id = commit(ctx, table, "append", changes^)
+        var commit_ms = Int(perf_counter_ns() - t0) // 1_000_000
+        rows += Int64(got.rows)
+        ctx.log(
+            String(
+                day, " hour ", hours[i], ": ", got.rows, " events in ",
+                len(got.files), " files, snapshot ", id, " (task ",
+                got.total_ms, " ms: download ", got.download_ms,
+                " ms overlapping gunzip ", got.gunzip_ms, " ms, parse ",
+                got.parse_ms, " ms, write ", got.write_ms, " ms, waiting ",
+                got.wait_ms, " ms; commit ", commit_ms, " ms)",
+            )
+        )
     ctx.log(String(day, ": ", rows, " events in ", len(hours) - done, " hours"))
     return rows
 
