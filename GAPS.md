@@ -33,7 +33,7 @@ an hour or needs reading library source), **low** (friction).
   <tin>` that prints/clones the pinned checkout. magmalake-apps: link every
   file it cites with a pinned GitHub URL.
 
-## 2. A pipeline binary run outside `pixi run` aborts in zstd with a misleading path (high)
+## 2. A pipeline binary run outside `pixi run` aborts in zstd with a misleading path (high; fixed in zstd-mojo 0.1.5)
 
 - **Tried:** `./build/gharchive run --partitions 2025-09-15` from a plain
   shell (after building with `pixi run mojo build`).
@@ -51,6 +51,9 @@ an hour or needs reading library source), **low** (friction).
   run`" in the abort. magmalake-apps: make "run them in `pixi shell` or with
   `pixi run`" a Common mistake with this exact error text; today it's one
   sentence that reads as optional. (On AWS the image presumably sets it.)
+- **Fixed:** zstd-mojo 0.1.5 finds its shim without `CONDA_PREFIX` and
+  raises instead of aborting. `./build/gharchive run` (zstd Parquet) and
+  `./build/console` both ran from a plain shell with `CONDA_PREFIX` unset.
 
 ## 3. GH Archive has no file lists in push events (data limitation; medium for the prompt)
 
@@ -88,7 +91,7 @@ an hour or needs reading library source), **low** (friction).
   N its last attempt made. Call `find_commit` first to skip work an attempt
   already committed."
 
-## 5. deflate-mojo is raw DEFLATE only; there's no gzip (low)
+## 5. deflate-mojo is raw DEFLATE only; there's no gzip (low; fixed in deflate-mojo 0.1.3)
 
 - **Tried:** to decompress GH Archive's `.json.gz` with a tin.
 - **Happened:** `deflate-mojo` is raw RFC 1951 by design ("Raw means raw");
@@ -99,6 +102,9 @@ an hour or needs reading library source), **low** (friction).
 - **Fix:** add `gunzip` / `gzip` to deflate-mojo (or a `gzip-mojo` tin) and
   list it in mojoshelf; mojo-data-performance's readers-and-codecs could
   mention it.
+- **Fixed:** deflate-mojo 0.1.3 has `gunzip`, `gunzip_at` and `gzip`
+  (`from deflate import gunzip`), with the CRC checked. `src/gz.mojo` is
+  gone; a day's two hours load in the same ~10 s as before.
 
 ## 6. Small API surprises (low)
 
@@ -113,7 +119,7 @@ an hour or needs reading library source), **low** (friction).
   one: it's `Datum.integral(P_TIMESTAMPTZ, micros)` (`from iceberg.types
   import P_TIMESTAMPTZ`), found in `iceberg/values.mojo`.
 
-## 7. orca refuses a keyed sensor over a dataset a dated pipeline writes (high)
+## 7. orca refuses a keyed sensor over a dataset a dated pipeline writes (high; fixed in orca 0.3.1)
 
 - **Tried:** what PROMPT.md asks and the orca skill shows: `mojo_history`
   keyed on `mojo.repos` (`partitions=Keyed["mojo.repos", ...]`,
@@ -144,8 +150,14 @@ an hour or needs reading library source), **low** (friction).
   other direction, a dated sensor reading a keyed pipeline's output.) Until
   then, the orca skill should say plainly that a keyed sensor's keys must
   be written outside orca, and show the workaround.
+- **Fixed:** orca 0.3.1 lets a dated pipeline write a keyed sensor's own
+  keys dataset. mojo_history is now `Keyed["mojo.repos", "repo"]` with
+  `sensor=True` and `reads=["mojo.repos"]`, scanned through `orca.tables`;
+  `mojo.repo_keys` is gone. It registers, the scheduler logged `sensed
+  mojo.repos@... for mojo_history 1 runs`, and `orca lineage mojo.commits`
+  runs back to `gharchive.events`.
 
-## 8. orca `Name` keys can't contain `/`, so repositories aren't keys (high)
+## 8. orca `Name` keys can't contain `/`, so repositories aren't keys (high; fixed in orca 0.3.1)
 
 - **Tried:** keys `owner/name` (the natural key, and the skill's example
   is repositories: "for things that aren't dates and grow (repositories,
@@ -158,6 +170,9 @@ an hour or needs reading library source), **low** (friction).
 - **Fix:** orca: allow `/` in names (it's the separator in run paths and log
   paths, so escape it there), or say the character set in the skill next to
   "The partition type is `Name`".
+- **Fixed:** orca 0.3.1 allows `/` inside a name (log directories write it
+  as `%2F`; a key's UI page is `/pipelines/<p>/keys/owner%2Fname`). Keys
+  are `owner/name`; the `key` column and the conversions are gone.
 
 ## 9. Mojo 1.2.0's `String.splitlines()` splits on tabs (high: silently wrong numbers)
 
@@ -190,7 +205,7 @@ an hour or needs reading library source), **low** (friction).
 - **Fix:** orca skill: say that mapped steps run sequentially and that
   parallelism comes from dista tasks inside a step; show a keyed Gather.
 
-## 11. A day's run that ran out of GitHub API budget can't be re-run by backfill (medium)
+## 11. A day's run that ran out of GitHub API budget can't be re-run by backfill (medium; fixed in orca 0.3.1)
 
 - **Tried:** with the unauthenticated limit (60 requests an hour) used up,
   `mojo_repos` checks some candidates and leaves the rest. After the limit
@@ -205,8 +220,11 @@ an hour or needs reading library source), **low** (friction).
 - **Fix:** orca: `orca backfill --force` (or `orca rerun <pipeline> KEY`)
   on the command line; the skill lists the UI's actions but not this
   limit of `backfill`.
+- **Fixed:** orca 0.3.1 has `orca backfill --rerun <pipeline> KEY`, which
+  queues keys that are done too. `orca backfill mojo_repos 2024-06-12`
+  queued 0 runs; with `--rerun` it queued 1, which ran. The README says so.
 
-## 12. Changing a table's schema means deleting it (medium)
+## 12. Changing a table's schema means deleting it (medium; fixed in orca 0.3.1 with iceberg-mojo 0.8.6)
 
 - **Tried:** to add two columns to `mojo.checked` after it had been
   created.
@@ -217,6 +235,12 @@ an hour or needs reading library source), **low** (friction).
 - **Fix:** iceberg-mojo: `Table.add_column` / `update_schema`; orca:
   `ensure_table` adding missing optional columns; the lake reference should
   say what to do when a schema changes.
+- **Fixed:** orca 0.3.1's `ensure_table` adds the optional columns a table
+  lacks (through iceberg-mojo's `UpdateSchema.union_by_name`; new field ids
+  follow the table's highest, in schema order). Not exercised here: this
+  run started from an empty lake because `mojo.repos` lost its required
+  `key` column, and dropping a column is still not something
+  `ensure_table` does.
 
 ## 13. The default UI port can be taken, and the skills only name the variable once (low)
 
@@ -259,6 +283,8 @@ an hour or needs reading library source), **low** (friction).
   done: pipeline mojo_repos has no step`; it needs `-d step=find_repos`.
 - **Fix:** an `orca rerun <run> [--from STEP]` command, or a line in the
   skill on the UI's JSON actions.
+- **Partly fixed:** for re-running a day, `orca backfill --rerun` (gap 11)
+  needs no form. Rerunning one run from a step still does.
 
 ## 17. Smaller things
 
@@ -272,23 +298,48 @@ an hour or needs reading library source), **low** (friction).
   still counts as done for orca, so reading it later needs a rerun or a
   rebuild. That's this project's choice, but orca has no "skipped"
   outcome for a key in a gather step.
-- The `orca lineage mojo.commits` output shows no inputs (gap 7: the keys
-  table is written outside orca, and `mojo.repos` is read undeclared).
+- The `orca lineage mojo.commits` output showed no inputs (gap 7). Fixed
+  in orca 0.3.1 with gap 7.
+
+## 18. `pixi shelf update orca-mojo` fails half-way with "duplicate records" (high)
+
+- **Tried:** `pixi shelf update` (refused in pixi mode: "pixi mode updates
+  one tin at a time"), then `pixi shelf update orca-mojo`.
+- **Happened:** it re-pins orca's dependencies one `pixi add --git` at a
+  time, solving after each. After six of them it stopped at objectstore-mojo:
+  `encountered duplicate records for objectstore-shim-0.2.0-hea27dcd_0_source.conda`
+  (the new objectstore rev's shim and the old one, still pinned through
+  packages not yet updated, have the same name, version and build). It
+  exited 1 and left `pixi.toml` half-updated, those six lines moved to the
+  end of `[dependencies]`, and orca itself not updated.
+- **Did instead:** restored `pixi.toml` and `pixi.lock`, read each tin's
+  latest `commit_sha` from `https://mojoshelf.org/api/tins/<name>`, wrote
+  all 22 revs in one edit and ran `pixi install` once (2 minutes).
+- **Fix:** mojoshelf: in pixi mode, `update` should compute the whole
+  closure's revs, write them in one edit and solve once (and update every
+  tin when no name is given); on failure, put `pixi.toml` back.
+
+## 19. `pixi shelf list` prints every conda package (low)
+
+- **Happened:** in pixi mode it prints the whole `pixi list` (python,
+  tzdata, zlib, ...), not the tins and their pinned versions.
+- **Fix:** mojoshelf: list only the tins, with version and rev.
 
 ---
 
-## What the local run did, the orca way
+## What the local run did, the orca way (orca 0.3.1)
 
+A fresh lake and `orca` database (the `mojo.repos` schema changed), the
 Postgres from conda-forge under `build/pg`, `scripts/env.sh`
 (`GHARCHIVE_HOURS=15,17`, `MOJO_HISTORY_MAX_KB=100000`,
-`ORCA_SENSE_SECONDS=10`), then:
+`ORCA_SENSE_SECONDS=10`), unauthenticated GitHub (59 requests left), then:
 
 ```
 $ ./build/orca register ./build/gharchive ./build/mojo_repos ./build/mojo_history
 registered gharchive
 registered mojo_repos
 registered mojo_history
-$ ./build/orca scheduler & ORCA_UI_ADDR=127.0.0.1:8271 ./build/orca ui &
+$ ./build/orca scheduler & ORCA_UI_ADDR=127.0.0.1:8275 ./build/orca ui &
 $ ./build/orca backfill gharchive 2024-06-12
 queued 1 runs
 ```
@@ -296,26 +347,40 @@ queued 1 runs
 The scheduler's log:
 
 ```
-started gharchive run 1 pid 86237
-reaped pid 86237 exit 0                       # 476,227 events, 2 hours, ~10 s
-sensed gharchive.events@60695637061508408 for mojo_repos run 2 for 2024-06-12
-sensed gharchive.events@1347351991139851327 for mojo_repos run 2 for 2024-06-12
-started mojo_repos run 2 pid 86255
-reaped pid 86255 exit 0                       # GitHub rate limit already used up: 23 candidates unchecked
-started mojo_repos run 3 pid 87939            # the UI's Rerun, after the limit reset
-reaped pid 87939 exit 0                       # 4 Mojo repositories, 19 others (forks, gone, not Mojo)
-sensed mojo.repo_keys@4677741210574082762 for mojo_history 1 runs from run 4
-started mojo_history run 4 pid 87975
-reaped pid 87975 exit 0                       # 3 cloned, modular/modular skipped for size
+started gharchive run 1 pid 73578
+reaped pid 73578 exit 0                       # 476,227 events, 2 hours, ~10 s
+sensed gharchive.events@3037946910953850598 for mojo_repos run 2 for 2024-06-12
+sensed gharchive.events@5050756693608396143 for mojo_repos run 2 for 2024-06-12
+started mojo_repos run 2 pid 73599
+reaped pid 73599 exit 0                       # 23 candidates checked, 4 Mojo repositories
+sensed mojo.repos@1204299635680259392 for mojo_history 1 runs from run 3
+started mojo_history run 3 pid 73618
+reaped pid 73618 exit 0                       # 3 read, modular/modular skipped for size
 ```
 
-`mojo_history` run 4: NuMojo 210 commits and 21 migrations (69,563 lines
-of Mojo now; none → magic in 2024-10, magic → pixi in 2025-06, Mojo 24.5 →
-1.2.0), Mojonet 139 commits and 6 migrations, mojo-flx 23 commits; 372
-commits and 27 migrations in all. The UI (`/`, `/runs/<id>`,
-`/pipelines/<name>`, `/datasets`, each also JSON with `Accept:
-application/json`) showed every run, step, log and snapshot; the
-mojo_history page showed "Keys From mojo.repo_keys @ 4677741210574082762,
-Keys 4, Done 4". `orca lineage mojo.repos` traced it back to
-`gharchive.events` and run 1; `orca lineage mojo.commits` couldn't (gap 7).
-The console served all three pages and their JSON from those tables.
+`mojo_history` run 3, keyed `Mojo-Numerics-and-Algorithms-group/NuMojo`,
+`modular/modular`, `mzaks/mojo-flx` and `sdgunaa/Mojonet`: NuMojo 210
+commits and 21 migrations (69,563 lines of Mojo now), Mojonet 139 commits
+and 6 migrations, mojo-flx 23 commits; 372 commits and 27 migrations in
+all, the same as on orca 0.3.0. The UI's mojo_history page shows `reads:
+mojo.repos` and "Keys From mojo.repos @ 1204299635680259392, Keys 4,
+Done 4"; a key's page answers at `/pipelines/mojo_history/keys/sdgunaa%2FMojonet`.
+
+```
+$ ./build/orca lineage mojo.commits
+mojo.commits@4273895710494911406
+made from:
+  0 mojo.commits@4273895710494911406 by mojo_history run 3 histories code 0xc80cbd207afece71 from mojo.repos@1204299635680259392
+  1 mojo.repos@1204299635680259392 by mojo_repos run 2 find_repos 2024-06-12 code 0xd85f69be3a5160d from gharchive.events@5050756693608396143
+  2 gharchive.events@5050756693608396143 by gharchive run 1 load_day 2024-06-12 code 0xc0829dc5610c78ce
+made from it:
+  nothing
+```
+
+`orca backfill mojo_repos 2024-06-12` then queued 0 runs, and `orca
+backfill --rerun mojo_repos 2024-06-12` queued run 4, which found the
+same 23 candidates already settled. From a plain shell with `CONDA_PREFIX`
+unset, `./build/gharchive run --partitions 2024-06-12` (one hour, into a
+scratch warehouse) wrote 264,870 events of zstd Parquet, and
+`./build/console` served `/`, `/versions`, `/repos/<owner>/<name>` and
+their JSON from the lake.

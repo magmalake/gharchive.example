@@ -10,9 +10,8 @@ tables.
 ```
 GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ mojo.repos ─┐
  (daily, 03:00 UTC,         (by day)         (sensor)      mojo.checked │
-  a dista task per hour)                                  mojo.repo_keys┘
-                                                               │
-                            mojo.commits ◀──mojo_history──────┘
+  a dista task per hour)                                               │
+                            mojo.commits ◀──mojo_history──────────────┘
                             mojo.migrations  (keyed by repository, 50 a run,
                                               a dista task per clone)
                                    │
@@ -35,8 +34,10 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   `mojo.repos` (created, first seen, how found, stars, forks, license,
   default branch, description, size); every answer goes into
   `mojo.checked`, so a repository is asked about once. Forks are left out.
-- **`pipelines/mojo_history.mojo`**: keyed by repository, 50 a run, a sensor
-  on the keys: new repositories start runs. Each repository is cloned in a
+- **`pipelines/mojo_history.mojo`**: keyed by repository (the `repo`
+  column of `mojo.repos`, `owner/name`), 50 a run, and a sensor on
+  `mojo.repos`: each snapshot mojo_repos commits starts runs for the
+  repositories it adds. Each repository is cloned in a
   dista task and its first-parent history read into `mojo.commits` (lines
   and files of Mojo at each commit, the tooling, none → magic → pixi, and
   the Mojo version the lock file or manifest names) and `mojo.migrations`
@@ -44,8 +45,7 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
 - **`bin/console.mojo`**: the libraries by size and age (`/`), the Mojo
   versions they moved to over time (`/versions`), and a page per
   repository (`/repos/<owner>/<name>`), each also as JSON under `/api/`.
-- **`src/`**: the tables (`lake.mojo`), the JSON scanner, gzip, HTTP,
-  detection, git history, and `versions.mojo`, which orders Mojo versions
+- **`src/`**: the tables (`lake.mojo`), the JSON scanner, HTTP, detection, git history, and `versions.mojo`, which orders Mojo versions
   across Modular's renumbering (24.x, 25.x, 0.25.x, 0.26.x, 1.x);
   `tests/test_versions.mojo` tests that order.
 
@@ -55,9 +55,10 @@ while this was built.
 ## Run it locally
 
 You need [pixi](https://pixi.sh) and the mojoshelf CLI (`pixi global install
---channel https://mojoshelf.org/channel mojoshelf`). Everything below runs
-inside the pixi environment: the binaries find zstd's shim through
-`CONDA_PREFIX`, so run them with `pixi run` or in `pixi shell`.
+--channel https://mojoshelf.org/channel mojoshelf`). Build inside the pixi
+environment; the built binaries also run from a plain shell (since
+zstd-mojo 0.1.5 they find their shared libraries without `CONDA_PREFIX`),
+though Postgres and `git` come from the pixi environment.
 
 ```sh
 pixi run build      # build/orca, build/{gharchive,mojo_repos,mojo_history}, build/console
@@ -100,20 +101,31 @@ pixi shell
 for p in gharchive mojo_repos mojo_history; do ./build/orca locate build/$p --root .; done
 ./build/orca register ./build/gharchive ./build/mojo_repos ./build/mojo_history
 ./build/orca scheduler &                 # fires, senses, starts runs
-./build/orca ui &                        # http://127.0.0.1:8270 (ORCA_UI_ADDR to move it)
+./build/orca ui &                        # http://127.0.0.1:8270
 ./build/orca backfill gharchive 2024-06-12
 ```
 
 The scheduler then runs gharchive for the day, which starts mojo_repos for
-the same day (sensor), whose new repositories start mojo_history (keyed
-sensor). Watch it in the UI or in `build/logs/<pipeline>/<run>/`.
+the same day (sensor), whose snapshot of `mojo.repos` starts mojo_history
+for the repositories it added (keyed sensor). Watch it in the UI or in
+`build/logs/<pipeline>/<run>/`. If port 8270 is taken (another orca UI),
+start the UI with `ORCA_UI_ADDR=127.0.0.1:8275`. `./build/orca lineage
+mojo.commits` traces the histories back to the `gharchive.events` snapshot
+and run they came from.
 `scripts/with-postgres.sh` (from orca) runs a command against a throwaway
 server instead.
 
 Without a token, GitHub allows 60 API requests an hour, and mojo_repos
 spends one to three per candidate; a day with more candidates than that
 leaves the rest as `unchecked` in `mojo.checked`, and the next run checks
-them first. Set `GITHUB_TOKEN` to lift the limit. Stop everything with
+them first. To check them for that day once the limit has reset (an hour
+later), re-run the day, which already succeeded:
+
+```sh
+./build/orca backfill --rerun mojo_repos 2024-06-12
+```
+
+Set `GITHUB_TOKEN` to lift the limit. Stop everything with
 `kill` on the scheduler's and UI's PIDs and `pg_ctl -D build/pg stop`.
 
 ### What a local run produced
@@ -122,7 +134,7 @@ On 2024-06-12, hours 15 and 17: 476,227 events (154 MB of Parquet), 23
 candidates, 4 Mojo repositories (NuMojo, Mojonet, mojo-flx and
 modular/modular, which was skipped for size), 3 histories read, 372
 commits and 27 migrations. The end of [GAPS.md](GAPS.md) has the run as the
-scheduler did it.
+scheduler did it, on orca 0.3.1.
 
 ## What's left for AWS
 
