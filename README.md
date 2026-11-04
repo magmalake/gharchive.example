@@ -7,6 +7,11 @@ pipelines write Iceberg tables, the project's own `orca` schedules them,
 and a [flare](https://github.com/magmalake/flare_mlake) app reads the
 tables.
 
+It runs on AWS: the console is at <https://libs.mlake.dev>, and orca's UI,
+with every run, log and table, at <https://orca-demo.mlake.dev>. The
+[getting-started guide](https://mlake.dev/getting-started/) builds it two
+ways, with an agent from [PROMPT.md](PROMPT.md) or step by step.
+
 ```
 GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ mojo.repos ─┐
  (daily, 03:00 UTC,         (by day)         (sensor)      mojo.checked │

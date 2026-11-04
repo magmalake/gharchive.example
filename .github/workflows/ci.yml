@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Build every program and run the tests, as on a laptop.
+  test:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          # pixi.lock is written by this version.
+          pixi-version: v0.78.0
+      - run: pixi run build
+      - run: pixi run test
+
+  # Build the image `orca aws push` builds, then run one hour of GH Archive
+  # through the gharchive pipeline inside it: the Linux-only failures (a
+  # library that won't link, a CA bundle in the wrong place) show up here
+  # rather than on AWS.
+  image:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -f Dockerfile.orca -t gharchive-image .
+      - name: Size
+        run: docker image ls gharchive-image --format '{{.Size}}'
+      - name: One hour of 2025-01-01 inside the image
+        run: |
+          docker run --rm --entrypoint sh \
+            -e GHARCHIVE_HOURS=0 -e ORCA_WAREHOUSE=/tmp/w gharchive-image \
+            -c 'gharchive run --partitions 2025-01-01'
+      - name: The console starts and answers
+        run: |
+          docker run -d --name console -p 8080:8080 -e PORT=8080 \
+            -e ORCA_WAREHOUSE=/tmp/w --entrypoint console gharchive-image
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:8080/ && exit 0
+            sleep 1
+          done
+          docker logs console
+          exit 1
