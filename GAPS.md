@@ -348,6 +348,34 @@ an hour or needs reading library source), **low** (friction).
   `GzipReader` with `feed`/`read_into` or `run`/`compact` like this one),
   and the eight-byte match copy in `_Out.copy_match`.
 
+## 21. Writing data files on a dista worker: no codec for `DataFile`, no "append these files" in orca (medium)
+
+- **Tried:** to have each hour's dista task write its Parquet files into
+  `gharchive.events` on the worker and send back only their entries, so
+  the step commits metadata instead of receiving ~450 MB of Arrow per
+  hour over IPC and writing it on one core.
+- **Happened:** iceberg-mojo's `write_data_files` returns
+  `List[DataFile]`, but `DataFile` (and `Datum`, `ColumnMetrics` in it)
+  hold `List`s, which dista's reflection codec refuses, and iceberg has no
+  serialised form short of a manifest. `orca.tables.append` only takes
+  batches; neither the orca skill nor `tables.mojo` mentions committing
+  files written elsewhere.
+- **Did instead:** `src/datafiles.mojo`: `DataFiles`, a dista `Codec`
+  that encodes every `DataFile` field by hand, and `TableWriter`, which
+  writes each 50,000-row batch as soon as the parser fills it. The worker
+  gets the table with `orca.tables.load_dataset` (workers have
+  `ORCA_WAREHOUSE` on AWS too); the step commits with `orca.tables.commit(ctx,
+  table, "append", FileChanges)`, which checks `find_commit` first, so the
+  retry rule is unchanged. Six hours at PARALLEL=4: 7.8 -> 4.5 s, and a
+  commit is ~1 ms. Files of an hour whose task finished but whose step
+  died before committing are left as orphans (as an interrupted `append`
+  already could).
+- **Fix:** iceberg-mojo: `DataFile.encode`/`decode` (or a dista `Codec`
+  in a small bridge), so file lists cross processes; orca:
+  `append_files(ctx, table, files)` next to `append`, and a line in the
+  skill that workers can write data files a step commits, with
+  `load_dataset` on the worker.
+
 ---
 
 ## What the local run did, the orca way (orca 0.3.1)

@@ -15,7 +15,7 @@ build-mojo-repos = "mkdir -p build && mojo build -I src pipelines/mojo_repos.moj
 build-mojo-history = "mkdir -p build && mojo build -I src pipelines/mojo_history.mojo -o build/mojo_history"
 build-pipelines = { depends-on = ["build-gharchive", "build-mojo-repos", "build-mojo-history"] }
 build = { depends-on = ["build-orca", "build-pipelines", "build-console"] }
-test = "mojo run -I src tests/test_versions.mojo && mojo run -I src tests/test_history.mojo && mojo run -I src tests/test_gzstream.mojo"
+test = "mojo run -I src tests/test_versions.mojo && mojo run -I src tests/test_history.mojo && mojo run -I src tests/test_gzstream.mojo && mojo run -I src tests/test_datafiles.mojo"
 
 [dependencies]
 mojo-compiler = "==1.2.0"

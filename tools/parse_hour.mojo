@@ -12,7 +12,7 @@ from std.sys import argv
 from std.time import perf_counter_ns
 
 from deflate import gunzip
-from events import parse_events, parse_gz
+from events import Collect, parse_events, parse_gz
 from parquet import RecordBatch
 
 
@@ -40,7 +40,10 @@ def main() raises:
     var t3 = perf_counter_ns()
     var n = len(data)
     _ = data^
-    var streamed = parse_gz(Span(gz))
+    var sink = Collect()
+    var timing = parse_gz(Span(gz), sink)
     var t4 = perf_counter_ns()
+    var streamed = List[RecordBatch]()
+    swap(streamed, sink.batches)
     print("bytes", len(gz), "->", n, "rows", _rows(batches), "stream rows", _rows(streamed))
-    print("read", _ms(t0, t1), "ms whole: gunzip", _ms(t1, t2), "ms parse", _ms(t2, t3), "ms; stream:", _ms(t3, t4), "ms")
+    print("read", _ms(t0, t1), "ms whole: gunzip", _ms(t1, t2), "ms parse", _ms(t2, t3), "ms; stream:", _ms(t3, t4), "ms (gunzip", timing.gunzip_ms, "ms parse", timing.parse_ms, "ms)")

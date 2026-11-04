@@ -27,9 +27,10 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
 - **`pipelines/gharchive.mojo`**: each day of [GH Archive](https://www.gharchive.org/)
   from 2023-01-01, at 03:00 UTC for the day before, into `gharchive.events`
   (`id`, `type`, `created_at`, `repo`, `actor`, `payload` as JSON text),
-  partitioned by day. A day's hours are dista tasks (download, then
-  gunzip and parse together a window at a time); each hour is appended as it arrives, so a day never sits in memory
-  whole, and a retry skips the hours already committed.
+  partitioned by day. A day's hours are dista tasks: each downloads its
+  hour, gunzips and parses it a window at a time, and writes the Parquet
+  files on the worker; the step commits each hour's files as one append,
+  in order, and a retry skips the hours already committed.
 - **`pipelines/mojo_repos.mojo`**: a sensor on `gharchive.events`. For each
   day it finds candidates (repository names, the `language` of repository
   objects that pull-request and fork payloads embed, commit messages

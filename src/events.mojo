@@ -1,11 +1,14 @@
 """GH Archive hours into `gharchive.events` record batches."""
 
 from std.os import getenv
+from std.time import perf_counter_ns
 
 from iceberg.batch import ColumnBuilder, batch_of
+from iceberg.catalog.filesystem import Table
 from iceberg.values import Datum
 from parquet import RecordBatch
 
+from datafiles import BatchSink, DataFiles, TableWriter
 from fetch import get_bytes
 from gzstream import FINISHED, GzipInflater
 from jscan import Range, field, path, raw, text, timestamp_micros
@@ -150,15 +153,55 @@ comptime CHUNK = 1 << 23
 """JSON decoded per step: the window the parser reads lines from."""
 
 
-def parse_gz(gz: Span[UInt8, _]) raises -> List[RecordBatch]:
+struct Collect(BatchSink, Movable):
+    """Keeps the batches."""
+
+    var batches: List[RecordBatch]
+
+    def __init__(out self):
+        self.batches = List[RecordBatch]()
+
+    def put(mut self, var batch: RecordBatch) raises:
+        self.batches.append(batch^)
+
+
+@fieldwise_init
+struct Timing(Copyable, Movable):
+    """Milliseconds in gunzip and in parsing (building columns included)."""
+
+    var gunzip_ms: Int
+    var parse_ms: Int
+
+
+def _drain[S: BatchSink](mut p: EventParser, mut sink: S) raises -> Int:
+    """Hands the parser's full batches to `sink`; the time it took, in ns."""
+    if len(p.out) == 0:
+        return 0
+    var t0 = perf_counter_ns()
+    var full = List[RecordBatch]()
+    swap(full, p.out)
+    for i in range(len(full)):
+        var b = RecordBatch()
+        swap(b, full[i])
+        sink.put(b^)
+    return Int(perf_counter_ns() - t0)
+
+
+def parse_gz[S: BatchSink](gz: Span[UInt8, _], mut sink: S) raises -> Timing:
     """A whole `.json.gz` hour, gunzipped a window at a time into the
-    parser, so the hour's JSON is never in memory at once."""
+    parser, so the hour's JSON is never in memory at once. Each batch goes
+    to `sink` as soon as it is full."""
+    var t_start = perf_counter_ns()
+    var inflate_ns = 0
+    var sink_ns = 0
     var inf = GzipInflater(CHUNK * 2)
     var p = EventParser()
     var lo = 0
     while True:
+        var t0 = perf_counter_ns()
         # At least a little more than is there, should a line outgrow CHUNK.
         var st = inf.run(gz, True, max(lo + CHUNK, inf.n + (1 << 20)))
+        inflate_ns += Int(perf_counter_ns() - t0)
         if st == FINISHED:
             p.feed(Span(inf.buf), lo, inf.n)
             break
@@ -170,10 +213,28 @@ def parse_gz(gz: Span[UInt8, _]) raises -> List[RecordBatch]:
             p.feed(buf, lo, nl + 1)
             lo = nl + 1
         lo -= inf.compact(lo)
-    return p^.finish()
+        sink_ns += _drain(p, sink)
+    var rest = p^.finish()
+    var t1 = perf_counter_ns()
+    for i in range(len(rest)):
+        var b = RecordBatch()
+        swap(b, rest[i])
+        sink.put(b^)
+    sink_ns += Int(perf_counter_ns() - t1)
+    var total = Int(perf_counter_ns() - t_start)
+    return Timing(inflate_ns // 1_000_000, (total - inflate_ns - sink_ns) // 1_000_000)
 
 
-def fetch_hour(day: String, hour: Int) raises -> List[RecordBatch]:
-    """Downloads, decompresses and parses one hour of GH Archive."""
+def fetch_hour(day: String, hour: Int, table: Table) raises -> DataFiles:
+    """Downloads, decompresses and parses one hour of GH Archive, and writes
+    it into `table`'s data files; returns them uncommitted."""
+    var t0 = perf_counter_ns()
     var gz = get_bytes(hour_url(day, hour))
-    return parse_gz(Span(gz))
+    var t1 = perf_counter_ns()
+    var w = TableWriter(table)
+    var timing = parse_gz(Span(gz), w)
+    var out = w^.finish()
+    out.download_ms = Int(t1 - t0) // 1_000_000
+    out.gunzip_ms = timing.gunzip_ms
+    out.parse_ms = timing.parse_ms
+    return out^
