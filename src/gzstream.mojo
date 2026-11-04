@@ -83,47 +83,64 @@ struct _Huffman(Copyable, Defaultable, Movable):
     var fast: List[Int32]
     """`(length << 16) | symbol` by the next `_FAST_BITS` bits, -1 where the
     code is longer."""
+    var offs: List[Int]
 
     def __init__(out self):
-        self.counts = List[Int]()
+        self.counts = List[Int](length=16, fill=0)
         self.symbols = List[Int]()
-        self.fast = List[Int32]()
+        self.fast = List[Int32](length=_FAST_SIZE, fill=-1)
+        self.offs = List[Int](length=16, fill=0)
 
     def __init__(out self, lengths: List[Int]) raises:
-        self.counts = List[Int](length=16, fill=0)
-        for i in range(len(lengths)):
-            self.counts[lengths[i]] += 1
-        if self.counts[0] == len(lengths):
-            self.symbols = List[Int]()
-            self.fast = List[Int32](length=_FAST_SIZE, fill=-1)
+        self = Self()
+        self.build(lengths, 0, len(lengths))
+
+    def build(mut self, lengths: List[Int], start: Int, count: Int) raises:
+        """The code for `lengths[start:start + count]`, in place: a dynamic
+        block rebuilds its tables without allocating."""
+        var c = self.counts.unsafe_ptr()
+        for n in range(16):
+            c[unsafe_offset=n] = 0
+        for i in range(count):
+            var l = lengths[start + i]
+            if l < 0 or l > 15:
+                raise Error("gunzip: bad code length")
+            c[unsafe_offset=l] += 1
+        var f = self.fast.unsafe_ptr()
+        for k in range(_FAST_SIZE):
+            f[unsafe_offset=k] = -1
+        if c[unsafe_offset=0] == count:
+            self.symbols.resize(0, 0)
             return
         var left = 1
         for n in range(1, 16):
             left <<= 1
-            left -= self.counts[n]
+            left -= c[unsafe_offset=n]
             if left < 0:
                 raise Error("gunzip: over-subscribed Huffman code")
-        var offs = List[Int](length=16, fill=0)
+        var o = self.offs.unsafe_ptr()
+        o[unsafe_offset=1] = 0
         for n in range(1, 15):
-            offs[n + 1] = offs[n] + self.counts[n]
-        self.symbols = List[Int](length=len(lengths), fill=0)
-        for i in range(len(lengths)):
-            if lengths[i]:
-                self.symbols[offs[lengths[i]]] = i
-                offs[lengths[i]] += 1
-        self.fast = List[Int32](length=_FAST_SIZE, fill=-1)
+            o[unsafe_offset=n + 1] = o[unsafe_offset=n] + c[unsafe_offset=n]
+        self.symbols.resize(count, 0)
+        var sy = self.symbols.unsafe_ptr()
+        for i in range(count):
+            var l = lengths[start + i]
+            if l:
+                sy[unsafe_offset=o[unsafe_offset=l]] = i
+                o[unsafe_offset=l] += 1
         var code = 0
         var idx = 0
         for n in range(1, 16):
-            for _k in range(self.counts[n]):
-                var sym = self.symbols[idx]
+            for _k in range(c[unsafe_offset=n]):
+                var sym = sy[unsafe_offset=idx]
                 idx += 1
                 if n <= _FAST_BITS:
                     var entry = Int32((n << 16) | sym)
                     var step = 1 << n
                     var at = _reverse_bits(code, n)
                     while at < _FAST_SIZE:
-                        self.fast[at] = entry
+                        f[unsafe_offset=at] = entry
                         at += step
                 code += 1
             code <<= 1
@@ -252,6 +269,10 @@ struct GzipInflater(Movable):
     var bitcnt: Int
     var fixed_lit: _Huffman
     var fixed_dist: _Huffman
+    var dyn_lit: _Huffman
+    var dyn_dist: _Huffman
+    var dyn_clen: _Huffman
+    var lengths: List[Int]
     var crc32: _Crc32
     var t: _Tables
     var total_out: Int
@@ -273,6 +294,10 @@ struct GzipInflater(Movable):
         self.bitcnt = 0
         self.fixed_lit = _Huffman(_fixed_literal_lengths())
         self.fixed_dist = _Huffman(List[Int](length=30, fill=5))
+        self.dyn_lit = _Huffman()
+        self.dyn_dist = _Huffman()
+        self.dyn_clen = _Huffman()
+        self.lengths = List[Int](length=320, fill=0)
         self.crc32 = _Crc32()
         self.t = _Tables()
         self.margin = _MARGIN
@@ -449,42 +474,42 @@ struct GzipInflater(Movable):
             var nlen = br.bits(5) + 257
             var ndist = br.bits(5) + 1
             var ncode = br.bits(4) + 4
-            var clen = List[Int](length=19, fill=0)
+            var lengths = self.lengths.unsafe_ptr()
+            for k in range(19):
+                lengths[unsafe_offset=k] = 0
             for i in range(ncode):
-                clen[self.t.clen_order[i]] = br.bits(3)
-            var ch = _Huffman(clen)
-            var lengths = List[Int](length=nlen + ndist, fill=0)
+                lengths[unsafe_offset=self.t.clen_order[i]] = br.bits(3)
+            self.dyn_clen.build(self.lengths, 0, 19)
+            var total = nlen + ndist
+            for k in range(total):
+                lengths[unsafe_offset=k] = 0
             var i = 0
-            while i < nlen + ndist:
-                var sym = br.decode(ch)
+            while i < total:
+                var sym = br.decode(self.dyn_clen)
                 if sym < 16:
-                    lengths[i] = sym
+                    lengths[unsafe_offset=i] = sym
                     i += 1
                 elif sym == 16:
                     if i == 0:
                         raise Error("repeat with no previous length")
-                    var prev = lengths[i - 1]
+                    var prev = lengths[unsafe_offset=i - 1]
                     var rep = 3 + br.bits(2)
-                    if i + rep > nlen + ndist:
+                    if i + rep > total:
                         raise Error("code-length overflow")
                     for _k in range(rep):
-                        lengths[i] = prev
+                        lengths[unsafe_offset=i] = prev
                         i += 1
                 elif sym == 17:
                     i += 3 + br.bits(3)
                 else:
                     i += 11 + br.bits(7)
-            if i > nlen + ndist:
+            if i > total:
                 raise Error("code-length overflow")
-            var lit_lengths = List[Int](capacity=nlen)
-            for k in range(nlen):
-                lit_lengths.append(lengths[k])
-            var dist_lengths = List[Int](capacity=ndist)
-            for k in range(ndist):
-                dist_lengths.append(lengths[nlen + k])
+            self.dyn_lit.build(self.lengths, 0, nlen)
+            self.dyn_dist.build(self.lengths, nlen, ndist)
             self.n = _codes(
-                br, _Huffman(lit_lengths), _Huffman(dist_lengths), self.t, self.buf,
-                self.n, self.base,
+                br, self.dyn_lit, self.dyn_dist, self.t, self.buf, self.n,
+                self.base,
             )
         else:
             raise Error("reserved block type 3")
@@ -505,7 +530,151 @@ def _codes(
     start: Int,
     base: Int,
 ) raises -> Int:
-    """A block's codes onto `buf` from `start`; returns the new end."""
+    """A block's codes onto `buf` from `start`; returns the new end.
+
+    While eight bytes of input remain, one refill per symbol leaves at
+    least 56 bits, enough for a length, its extra bits, a distance and its
+    extra bits (48), so the bit buffer is used unchecked; the last bytes
+    go through `_codes_checked`."""
+    var n = start
+    var limit = len(buf) - _SLACK
+    var p = buf.unsafe_ptr()
+    var ip = br.data.unsafe_ptr()
+    var in_n = len(br.data)
+    var bitbuf = br.bitbuf
+    var bitcnt = br.bitcnt
+    var pos = br.pos
+    var litf = lit.fast.unsafe_ptr()
+    var distf = dist.fast.unsafe_ptr()
+    var lbase = t.len_base.unsafe_ptr()
+    var lextra = t.len_extra.unsafe_ptr()
+    var dbase = t.dist_base.unsafe_ptr()
+    var dextra = t.dist_extra.unsafe_ptr()
+    comptime MASK = UInt64(_FAST_SIZE - 1)
+    while True:
+        if pos + 8 > in_n:
+            br.bitbuf = bitbuf
+            br.bitcnt = bitcnt
+            br.pos = pos
+            return _codes_checked(br, lit, dist, t, buf, n, base)
+        if n > limit:
+            buf.resize(len(buf) * 2, 0)
+            limit = len(buf) - _SLACK
+            p = buf.unsafe_ptr()
+        var chunk = (
+            ip.unsafe_offset(pos).unsafe_bitcast[UInt64]().unsafe_load[
+                alignment=1
+            ]()
+        )
+        bitbuf |= chunk << UInt64(bitcnt)
+        pos += (63 - bitcnt) >> 3
+        bitcnt |= 56
+        var e = Int(litf[unsafe_offset=Int(bitbuf & MASK)])
+        var sym: Int
+        if e >= 0:
+            var used = e >> 16
+            bitbuf >>= UInt64(used)
+            bitcnt -= used
+            sym = e & 0xFFFF
+        else:
+            br.bitbuf = bitbuf
+            br.bitcnt = bitcnt
+            br.pos = pos
+            sym = br.decode_long(lit)
+            bitbuf = br.bitbuf
+            bitcnt = br.bitcnt
+            pos = br.pos
+        if sym < 256:
+            p[unsafe_offset=n] = UInt8(sym)
+            n += 1
+            # A second literal from the same refill, if its code is short.
+            if bitcnt >= _FAST_BITS:
+                var e2 = Int(litf[unsafe_offset=Int(bitbuf & MASK)])
+                if e2 >= 0 and (e2 & 0xFFFF) < 256:
+                    var used2 = e2 >> 16
+                    bitbuf >>= UInt64(used2)
+                    bitcnt -= used2
+                    p[unsafe_offset=n] = UInt8(e2 & 0xFFFF)
+                    n += 1
+            continue
+        if sym == 256:
+            break
+        var lc = sym - 257
+        if lc >= 29:
+            raise Error("invalid length symbol")
+        var le = lextra[unsafe_offset=lc]
+        var length = lbase[unsafe_offset=lc] + Int(
+            bitbuf & ((UInt64(1) << UInt64(le)) - 1)
+        )
+        bitbuf >>= UInt64(le)
+        bitcnt -= le
+        var ed = Int(distf[unsafe_offset=Int(bitbuf & MASK)])
+        var dc: Int
+        if ed >= 0:
+            var used = ed >> 16
+            bitbuf >>= UInt64(used)
+            bitcnt -= used
+            dc = ed & 0xFFFF
+        else:
+            br.bitbuf = bitbuf
+            br.bitcnt = bitcnt
+            br.pos = pos
+            dc = br.decode_long(dist)
+            bitbuf = br.bitbuf
+            bitcnt = br.bitcnt
+            pos = br.pos
+        if dc >= 30:
+            raise Error("invalid distance symbol")
+        var de = dextra[unsafe_offset=dc]
+        if bitcnt < de:
+            raise Error("truncated DEFLATE stream")
+        var d = dbase[unsafe_offset=dc] + Int(
+            bitbuf & ((UInt64(1) << UInt64(de)) - 1)
+        )
+        bitbuf >>= UInt64(de)
+        bitcnt -= de
+        if d > n - base or d > n:
+            raise Error("distance runs before the output start")
+        var src = n - d
+        if d >= 16:
+            var k = 0
+            while k < length:
+                p.unsafe_offset(n + k).unsafe_store[width=16](
+                    p.unsafe_offset(src + k).unsafe_load[width=16]()
+                )
+                k += 16
+        elif d >= 8:
+            var k = 0
+            while k < length:
+                var v = (
+                    p.unsafe_offset(src + k)
+                    .unsafe_bitcast[UInt64]()
+                    .unsafe_load[alignment=1]()
+                )
+                p.unsafe_offset(n + k).unsafe_bitcast[UInt64]().unsafe_store[
+                    alignment=1
+                ](v)
+                k += 8
+        else:
+            for k in range(length):
+                p[unsafe_offset=n + k] = p[unsafe_offset=src + k]
+        n += length
+    br.bitbuf = bitbuf
+    br.bitcnt = bitcnt
+    br.pos = pos
+    return n
+
+
+def _codes_checked(
+    mut br: _Bits,
+    lit: _Huffman,
+    dist: _Huffman,
+    t: _Tables,
+    mut buf: List[UInt8],
+    start: Int,
+    base: Int,
+) raises -> Int:
+    """`_codes` near the end of the input: every read checked."""
     var n = start
     var limit = len(buf) - _SLACK
     var p = buf.unsafe_ptr()

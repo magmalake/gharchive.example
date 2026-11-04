@@ -418,6 +418,32 @@ an hour or needs reading library source), **low** (friction).
   bytes; parquet.mojo: stream row groups to the output instead of
   holding the whole file.
 
+## 24. deflate-mojo inflates at ~60% of libdeflate's speed; libdeflate is a candidate backend (medium)
+
+- **Tried:** to make gunzip faster, comparing on one hour (70 MB in,
+  491 MB out, M-series Mac) deflate-mojo 0.1.3's `gunzip` (575 ms), this
+  app's streaming inflater before and after tuning (380 ms, 331 ms, both
+  with the CRC-32, which is ~55 ms of it), zlib 1.3.2's streaming
+  `inflate` (445 ms) and libdeflate 1.26's whole-buffer
+  `libdeflate_gzip_decompress` (180-225 ms). libdeflate and zlib are
+  already in the environment (flare_mlake depends on libdeflate, for gzip
+  responses); no magmalake tin wraps libdeflate's decompressor.
+- **Happened:** libdeflate is fastest but only decodes a whole buffer into
+  a whole buffer: it would bring back the ~500 MB of JSON per hour per
+  worker that streaming removed, and the decode couldn't start before the
+  download ended. For ~130 ms an hour (about 9% of an hour's CPU here) that
+  isn't a clear win, so the app doesn't call it.
+- **Did instead:** tuned the app's inflater: one bit-buffer refill per
+  symbol with unchecked reads while 8 bytes of input remain, a second
+  literal from the same refill, a 10-bit first-level table, Huffman tables
+  rebuilt in place rather than allocated per block, and 16-byte match
+  copies when the distance allows (380 -> 331 ms an hour).
+- **Fix:** deflate-mojo: these decoder changes; and for callers that hold
+  the whole output anyway and know its size (Parquet GZIP pages, Avro
+  deflate blocks, `gunzip` itself via ISIZE), an optional libdeflate
+  backend, or libdeflate's tricks (combined length/extra tables,
+  multi-literal decode) in Mojo.
+
 ---
 
 ## What the local run did, the orca way (orca 0.3.1)
