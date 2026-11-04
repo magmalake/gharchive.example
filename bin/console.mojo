@@ -144,7 +144,7 @@ def _page(title: String, var body: String, section: String) raises -> Response:
         "<main><div class=wrap>", body, "</div></main>",
         "<footer><div class=wrap><p>An independent project; Mojo is a trademark of Modular Inc.",
         " Data from <a href='https://www.gharchive.org' rel=noopener>GH Archive</a>, read by the",
-        " census pipelines on <a href='https://orca.mlake.dev' rel=noopener>orca</a>: the hour's",
+        " mojo-census pipelines on <a href='https://orca.mlake.dev' rel=noopener>orca</a>: the hour's",
         " public GitHub events, the repositories with Mojo in them, and what their lock files",
         " say at each commit.</p>",
         "<nav><a href='https://mlake.dev' rel=noopener>mlake.dev</a>",

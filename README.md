@@ -1,4 +1,4 @@
-# gharchive.example
+# mojo-census
 
 A lake of GitHub activity built on [magmalake](https://magmalake.org), and
 a console that shows how Mojo libraries have grown. Everything is Mojo, in
