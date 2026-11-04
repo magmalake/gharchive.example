@@ -11,8 +11,8 @@ from iceberg.catalog.filesystem import Table
 from parquet import RecordBatch
 
 from datafiles import BatchSink, DataFiles, TableWriter
-from fetch import get_bytes
-from gzstream import FINISHED, GzipInflater
+from fetch import Download
+from gzstream import FINISHED, MARGIN, NEED_INPUT, GzInput, GzipInflater, Whole
 from jscan import Range, find_newline, scan_event, text, timestamp_micros
 from lake import events_schema
 
@@ -245,10 +245,12 @@ struct Collect(BatchSink, Movable):
 
 @fieldwise_init
 struct Timing(Copyable, Movable):
-    """Milliseconds in gunzip and in parsing (building columns included)."""
+    """Milliseconds in gunzip, in parsing (building columns included), and
+    waiting for input still downloading."""
 
     var gunzip_ms: Int
     var parse_ms: Int
+    var wait_ms: Int
 
 
 def _drain[S: BatchSink](mut p: EventParser, mut sink: S) raises -> Int:
@@ -266,19 +268,32 @@ def _drain[S: BatchSink](mut p: EventParser, mut sink: S) raises -> Int:
 
 
 def parse_gz[S: BatchSink](gz: Span[UInt8, _], mut sink: S) raises -> Timing:
-    """A whole `.json.gz` hour, gunzipped a window at a time into the
-    parser, so the hour's JSON is never in memory at once. Each batch goes
-    to `sink` as soon as it is full."""
+    """A whole `.json.gz` hour into `sink` (see `decode_gz`)."""
+    return decode_gz(Whole(gz), sink)
+
+
+def decode_gz[
+    I: GzInput, S: BatchSink
+](input: I, mut sink: S) raises -> Timing:
+    """A `.json.gz` hour, gunzipped a window at a time into the parser, so
+    the hour's JSON is never in memory at once; each batch goes to `sink`
+    as soon as it is full. The input may still be arriving: what is there
+    is decoded, and the wait is only for what the inflater needs next."""
     var t_start = perf_counter_ns()
     var inflate_ns = 0
     var sink_ns = 0
+    var wait_ns = 0
     var inf = GzipInflater(CHUNK * 2)
     var p = EventParser()
     var lo = 0
     while True:
+        var complete = input.complete()
+        var have = input.have()
         var t0 = perf_counter_ns()
         # At least a little more than is there, should a line outgrow CHUNK.
-        var st = inf.run(gz, True, max(lo + CHUNK, inf.n + (1 << 20)))
+        var st = inf.run(
+            input.view(have), complete, max(lo + CHUNK, inf.n + (1 << 20))
+        )
         inflate_ns += Int(perf_counter_ns() - t0)
         if st == FINISHED:
             p.feed(Span(inf.buf), lo, inf.n)
@@ -292,6 +307,10 @@ def parse_gz[S: BatchSink](gz: Span[UInt8, _], mut sink: S) raises -> Timing:
             lo = nl + 1
         lo -= inf.compact(lo)
         sink_ns += _drain(p, sink)
+        if st == NEED_INPUT:
+            var t1 = perf_counter_ns()
+            _ = input.wait(inf.pos + MARGIN)
+            wait_ns += Int(perf_counter_ns() - t1)
     var rest = p^.finish()
     var t1 = perf_counter_ns()
     for i in range(len(rest)):
@@ -300,19 +319,25 @@ def parse_gz[S: BatchSink](gz: Span[UInt8, _], mut sink: S) raises -> Timing:
         sink.put(b^)
     sink_ns += Int(perf_counter_ns() - t1)
     var total = Int(perf_counter_ns() - t_start)
-    return Timing(inflate_ns // 1_000_000, (total - inflate_ns - sink_ns) // 1_000_000)
+    return Timing(
+        inflate_ns // 1_000_000,
+        (total - inflate_ns - sink_ns - wait_ns) // 1_000_000,
+        wait_ns // 1_000_000,
+    )
 
 
 def fetch_hour(day: String, hour: Int, table: Table) raises -> DataFiles:
-    """Downloads, decompresses and parses one hour of GH Archive, and writes
-    it into `table`'s data files; returns them uncommitted."""
+    """Downloads one hour of GH Archive and, as it arrives, decompresses
+    and parses it and writes it into `table`'s data files; returns them
+    uncommitted."""
     var t0 = perf_counter_ns()
-    var gz = get_bytes(hour_url(day, hour))
-    var t1 = perf_counter_ns()
+    var dl = Download(hour_url(day, hour))
     var w = TableWriter(table)
-    var timing = parse_gz(Span(gz), w)
+    var timing = decode_gz(dl, w)
     var out = w^.finish()
-    out.download_ms = Int(t1 - t0) // 1_000_000
+    out.download_ms = dl.ms()
     out.gunzip_ms = timing.gunzip_ms
     out.parse_ms = timing.parse_ms
+    out.wait_ms = timing.wait_ms
+    out.total_ms = Int(perf_counter_ns() - t0) // 1_000_000
     return out^

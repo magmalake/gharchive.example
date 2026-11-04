@@ -217,6 +217,9 @@ struct DataFiles(Codec, Copyable, Movable):
     var gunzip_ms: Int
     var parse_ms: Int
     var write_ms: Int
+    var wait_ms: Int
+    """Decoding waiting for the download."""
+    var total_ms: Int
 
     def __init__(out self):
         self.files = List[DataFile]()
@@ -225,6 +228,8 @@ struct DataFiles(Codec, Copyable, Movable):
         self.gunzip_ms = 0
         self.parse_ms = 0
         self.write_ms = 0
+        self.wait_ms = 0
+        self.total_ms = 0
 
     def encode(self, mut out: List[UInt8]):
         _put_int(out, len(self.files))
@@ -235,6 +240,8 @@ struct DataFiles(Codec, Copyable, Movable):
         _put_int(out, self.gunzip_ms)
         _put_int(out, self.parse_ms)
         _put_int(out, self.write_ms)
+        _put_int(out, self.wait_ms)
+        _put_int(out, self.total_ms)
 
     @staticmethod
     def decode(buf: Span[UInt8, _], mut pos: Int) raises -> Self:
@@ -249,6 +256,8 @@ struct DataFiles(Codec, Copyable, Movable):
         out.gunzip_ms = _get_int(buf, pos)
         out.parse_ms = _get_int(buf, pos)
         out.write_ms = _get_int(buf, pos)
+        out.wait_ms = _get_int(buf, pos)
+        out.total_ms = _get_int(buf, pos)
         return out^
 
 

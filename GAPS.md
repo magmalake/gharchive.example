@@ -444,6 +444,32 @@ an hour or needs reading library source), **low** (friction).
   backend, or libdeflate's tricks (combined length/extra tables,
   multi-literal decode) in Mojo.
 
+## 25. Overlapping a download with its decode takes a hand-made thread (low)
+
+- **Tried:** to decode each hour while it downloads, so an hour costs
+  max(download, decode) instead of their sum (17-29 MB/s from
+  data.gharchive.org is 2.2-3.8 s an hour; decoding and writing one is
+  now ~1 s).
+- **Happened:** flare 0.13.2's `HttpClient.send_streaming` /
+  `HttpStreamResponse.read_chunk` stream a body, but a single thread that
+  alternates reading and decoding only overlaps as much as the socket
+  buffer holds. Nothing in the skills or tins does "read this body on
+  another thread into a buffer I can watch": threads-mojo gives
+  `ThreadHandle.spawn` over a thin `def(OpaquePtr)` and atomics, so the
+  shared state is a heap struct by address. `read_chunk` returns a new
+  `List` per call, which is then copied into the buffer.
+- **Did instead:** `fetch.Download`: the response moves to a heap
+  `_Shared` with a buffer sized from `Content-Length`; a reader thread
+  copies chunks in and release-stores how much has arrived; the task's
+  thread inflates what is there (the inflater rolls back a block that
+  outruns it) and polls when it needs more. Without `Content-Length` the
+  body is read whole first. At 25 MB/s per connection, six hours: PARALLEL=1
+  23.8 -> 17.2 s (the downloads alone are ~16.8 s), PARALLEL=4 8.0 -> 5.7 s.
+- **Fix:** flare: `read_chunk_into(buf, at)` (no allocation per chunk),
+  and a `Body` that fills a buffer on its own thread with `available()` /
+  `wait(n)`; threads-mojo: a typed `spawn` over an owned value, as
+  `TypedPool` does for pools.
+
 ---
 
 ## What the local run did, the orca way (orca 0.3.1)

@@ -2,8 +2,9 @@
 
 Daily from 2023-01-01, at 03:00 UTC for the day before. A day's step fans
 its hours out as dista tasks, at most `GHARCHIVE_PARALLEL` at a time. A
-task downloads its hour, gunzips and parses it a window at a time, and
-writes the Parquet data files into the table itself; it sends back only
+task streams its hour in on a reader thread while it gunzips and parses
+what has arrived, a window at a time, and writes the Parquet data files
+into the table itself; it sends back only
 their entries, which the step commits, an hour as one append, in hour
 order. An hour is one snapshot; a retried step finds the hours its earlier
 attempt committed and skips them without downloading again.
@@ -78,10 +79,11 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
         ctx.log(
             String(
                 day, " hour ", hours[i], ": ", got.rows, " events in ",
-                len(got.files), " files, snapshot ", id, " (download ",
-                got.download_ms, " ms, gunzip ", got.gunzip_ms, " ms, parse ",
-                got.parse_ms, " ms, write ", got.write_ms, " ms, commit ",
-                commit_ms, " ms)",
+                len(got.files), " files, snapshot ", id, " (task ",
+                got.total_ms, " ms: download ", got.download_ms,
+                " ms overlapping gunzip ", got.gunzip_ms, " ms, parse ",
+                got.parse_ms, " ms, write ", got.write_ms, " ms, waiting ",
+                got.wait_ms, " ms; commit ", commit_ms, " ms)",
             )
         )
     ctx.log(String(day, ": ", rows, " events in ", len(hours) - done, " hours"))

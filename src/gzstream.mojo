@@ -10,7 +10,7 @@ keeping the 32 KiB that back-references can still reach.
 The input can arrive while decoding goes on (`run` takes how much of it is
 there so far, and whether that is all of it): a block that runs past the
 bytes available is rolled back to its start and decoded again when more
-have come. So that this is rare, a block is only started with `_MARGIN`
+have come. So that this is rare, a block is only started with `MARGIN`
 bytes in hand, more than any block zlib writes.
 
 The Huffman decoding is deflate-mojo's (`deflate/raw.mojo`, Apache-2.0,
@@ -23,13 +23,62 @@ from deflate.gzip import _Crc32
 comptime _FAST_BITS: Int = 10
 comptime _FAST_SIZE: Int = 1 << _FAST_BITS
 comptime _WINDOW: Int = 32768
-comptime _MARGIN: Int = 1 << 18
+comptime MARGIN: Int = 1 << 18
 """Input a block may need. zlib ends a block at 16 Ki symbols (memLevel 8)
 or 32 Ki (9), at most ~200 KB of input; a block that is longer is still
 decoded right, by rolling back and waiting for more."""
 comptime _SLACK: Int = 258 + 16
 """Room kept past the write position: the longest match, and the eight-byte
 copy's overshoot."""
+
+trait GzInput:
+    """Compressed bytes that may still be arriving."""
+
+    def have(self) raises -> Int:
+        """How many bytes are there so far."""
+        ...
+
+    def complete(self) raises -> Bool:
+        """Whether that is all of them."""
+        ...
+
+    def view(self, n: Int) -> Span[UInt8, MutUntrackedOrigin]:
+        """The first `n` (at most `have()`) bytes."""
+        ...
+
+    def wait(self, want: Int) raises -> Int:
+        """Blocks until `want` bytes are there or all are; returns `have()`."""
+        ...
+
+
+struct Whole(GzInput, Movable):
+    """A buffer that is all there already."""
+
+    var addr: Int
+    var n: Int
+
+    def __init__(out self, data: Span[UInt8, _]):
+        """`data` must outlive this."""
+        self.addr = Int(data.unsafe_ptr())
+        self.n = len(data)
+
+    def have(self) raises -> Int:
+        return self.n
+
+    def complete(self) raises -> Bool:
+        return True
+
+    def view(self, n: Int) -> Span[UInt8, MutUntrackedOrigin]:
+        return Span[UInt8, MutUntrackedOrigin](
+            unsafe_ptr=Pointer[UInt8, MutUntrackedOrigin](
+                unsafe_from_address=self.addr
+            ),
+            length=n,
+        )
+
+    def wait(self, want: Int) raises -> Int:
+        return self.n
+
 
 comptime HEADER = 0
 comptime BLOCKS = 1
@@ -277,7 +326,7 @@ struct GzipInflater(Movable):
     var t: _Tables
     var total_out: Int
     var margin: Int
-    """Input to have in hand before starting a block (`_MARGIN`); 0
+    """Input to have in hand before starting a block (`MARGIN`); 0
     makes every block that outruns the input roll back, for testing."""
 
     def __init__(out self, capacity: Int = 1 << 24) raises:
@@ -300,7 +349,7 @@ struct GzipInflater(Movable):
         self.lengths = List[Int](length=320, fill=0)
         self.crc32 = _Crc32()
         self.t = _Tables()
-        self.margin = _MARGIN
+        self.margin = MARGIN
         self.total_out = 0
 
     def compact(mut self, keep_from: Int) -> Int:
