@@ -325,6 +325,29 @@ an hour or needs reading library source), **low** (friction).
   tzdata, zlib, ...), not the tins and their pinned versions.
 - **Fix:** mojoshelf: list only the tins, with version and rev.
 
+## 20. deflate-mojo can't inflate a stream a window at a time (medium)
+
+- **Tried:** to decode an hour of GH Archive (one gzip member, ~65 MB in,
+  ~500 MB of JSON out) a window at a time, parsing lines as they come, so
+  the hour's JSON is never in memory whole.
+- **Happened:** deflate-mojo 0.1.3 has `gunzip`, `gunzip_at`, `inflate`
+  and `inflate_at`, all of which return the whole output. GH Archive's
+  files are single-member, so decoding member by member doesn't help. The
+  decoder's state (`_BitReader`, `_Out`, the block loop in `_inflate_into`)
+  isn't public or resumable.
+- **Did instead:** `src/gzstream.mojo`, `GzipInflater`: deflate-mojo's
+  Huffman decoding with its state kept between calls. `run(data,
+  complete, want)` inflates blocks until the window holds `want` bytes;
+  `compact` drops what the caller used, keeping the 32 KiB back-references
+  reach. The input may still be arriving: a block that runs past it is
+  rolled back and decoded again later. It also copies matches eight bytes
+  at a time where the distance allows, rather than byte by byte. An hour
+  now decodes and parses in 1.48 s instead of 0.58 + 1.09 s, and a
+  worker's peak RSS fell (see the PR).
+- **Fix:** deflate-mojo: a public streaming decoder (`Inflater` /
+  `GzipReader` with `feed`/`read_into` or `run`/`compact` like this one),
+  and the eight-byte match copy in `_Out.copy_match`.
+
 ---
 
 ## What the local run did, the orca way (orca 0.3.1)
