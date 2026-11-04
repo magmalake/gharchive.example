@@ -6,13 +6,36 @@ the REST API allows 60 requests an hour, which is enough for a local run.
 """
 
 from std.os import getenv
+from std.os.path import exists
 
 from flare.http import HttpClient, Request, Response
+from flare.tls import TlsConfig
 
 comptime USER_AGENT = "gharchive.example (magmalake)"
 
 
-def _client(timeout_ms: Int = 120_000) -> HttpClient:
+def _ca_bundle() -> String:
+    """A CA bundle path for flare to load: `SSL_CERT_FILE`, else the first
+    of the conda and Debian bundles that exists, else "" (OpenSSL's
+    default). flare 0.13.2 passes an empty path to OpenSSL without its
+    terminating NUL on Linux, so a concrete path avoids that."""
+    var env = getenv("SSL_CERT_FILE")
+    if env:
+        return env
+    var prefix = getenv("CONDA_PREFIX")
+    var conda = String(prefix, "/ssl/cacert.pem")
+    if prefix and exists(conda):
+        return conda
+    var debian = String("/etc/ssl/certs/ca-certificates.crt")
+    if exists(debian):
+        return debian
+    return String()
+
+
+def _client(timeout_ms: Int = 120_000) raises -> HttpClient:
+    var ca = _ca_bundle()
+    if ca:
+        return HttpClient(TlsConfig(ca_bundle=ca), timeout_ms=timeout_ms)
     return HttpClient(timeout_ms=timeout_ms)
 
 

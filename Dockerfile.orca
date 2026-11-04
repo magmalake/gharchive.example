@@ -1,5 +1,5 @@
 # orca's default project image (orca aws push), plus the CA certificates at
-# the path libcurl and OpenSSL were built to look in. Drop this file once
+# the paths libcurl, OpenSSL and flare look in. Drop this file once
 # objectstore-mojo reads SSL_CERT_FILE and the system bundle.
 # The image `orca aws push` builds for a project that added orca with
 # `pixi shelf add orca-mojo`: its own `orca` (bin/scheduler.mojo, the two
@@ -48,5 +48,8 @@ COPY --from=build /out/pipelines /opt/orca/pipelines
 # the build environment's prefix, compiled in when conda relocated them, so
 # keep that directory at the same path.
 COPY --from=build /src/project/.pixi/envs/default/ssl /src/project/.pixi/envs/default/ssl
+# gharchive's fetch hands flare $CONDA_PREFIX/ssl/cacert.pem, and
+# CONDA_PREFIX is /opt/orca here.
+COPY --from=build /src/project/.pixi/envs/default/ssl /opt/orca/ssl
 ENV CONDA_PREFIX=/opt/orca LD_LIBRARY_PATH=/opt/orca/lib PATH=/opt/orca/bin:/opt/orca/pipelines:/usr/bin:/bin
 ENTRYPOINT ["/opt/orca/bin/orca"]
