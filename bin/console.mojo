@@ -140,7 +140,7 @@ def _page(title: String, var body: String, section: String) raises -> Response:
         "<nav>", _nav("/", "Libraries", section == "libraries"),
         _nav("/versions", "Versions", section == "versions"),
         "<span class=sep aria-hidden=true></span>",
-        "<a href='https://mlake.dev' rel=noopener>mlake.dev<span class=arrow> &#8599;</span></a></nav></div></header>",
+        "<a href='https://orca.mlake.dev' rel=noopener title='The pipelines that build this census'>orca<span class=arrow> &#8599;</span></a><a href='https://mlake.dev' rel=noopener>mlake.dev<span class=arrow> &#8599;</span></a></nav></div></header>",
         "<main><div class=wrap>", body, "</div></main>",
         "<footer><div class=wrap><p>An independent project; Mojo is a trademark of Modular Inc.",
         " Data from <a href='https://www.gharchive.org' rel=noopener>GH Archive</a>, read by the",
