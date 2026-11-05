@@ -39,7 +39,8 @@ RUN env=/src/project/.pixi/envs/default && mkdir -p /out/lib \
     && cp -L -t /out/lib $loaded
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata ca-certificates \
+# mojo_history clones each repository with git.
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/lib /opt/orca/lib
 COPY --from=build /out/bin /opt/orca/bin
