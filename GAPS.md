@@ -33,6 +33,8 @@ an hour or needs reading library source), **low** (friction).
   <tin>` that prints/clones the pinned checkout. magmalake-apps: link every
   file it cites with a pinned GitHub URL.
 
+- **Tracked in** mojoshelf/mojoshelf#31.
+
 ## 2. A pipeline binary run outside `pixi run` aborts in zstd with a misleading path (high; fixed in zstd-mojo 0.1.5)
 
 - **Tried:** `./build/gharchive run --partitions 2025-09-15` from a plain
@@ -118,6 +120,8 @@ an hour or needs reading library source), **low** (friction).
 - The lake reference lists `timestamp` among the types but not how to make
   one: it's `Datum.integral(P_TIMESTAMPTZ, micros)` (`from iceberg.types
   import P_TIMESTAMPTZ`), found in `iceberg/values.mojo`.
+
+- **Tracked in** magmalake/flare_mlake#19 (`take_body`).
 
 ## 7. orca refuses a keyed sensor over a dataset a dated pipeline writes (high; fixed in orca 0.3.1)
 
@@ -286,6 +290,8 @@ an hour or needs reading library source), **low** (friction).
 - **Partly fixed:** for re-running a day, `orca backfill --rerun` (gap 11)
   needs no form. Rerunning one run from a step still does.
 
+- **Tracked in** magmalake/orca.mojo#137.
+
 ## 17. Smaller things
 
 - mojoshelf-consume says pixi mode *requires* the
@@ -300,6 +306,8 @@ an hour or needs reading library source), **low** (friction).
   outcome for a key in a gather step.
 - The `orca lineage mojo.commits` output showed no inputs (gap 7). Fixed
   in orca 0.3.1 with gap 7.
+
+- **Tracked in** mojoshelf/mojoshelf#33, magmalake/orca.mojo#138.
 
 ## 18. `pixi shelf update orca-mojo` fails half-way with "duplicate records" (high)
 
@@ -319,11 +327,15 @@ an hour or needs reading library source), **low** (friction).
   closure's revs, write them in one edit and solve once (and update every
   tin when no name is given); on failure, put `pixi.toml` back.
 
+- **Tracked in** mojoshelf/mojoshelf#22 (closed).
+
 ## 19. `pixi shelf list` prints every conda package (low)
 
 - **Happened:** in pixi mode it prints the whole `pixi list` (python,
   tzdata, zlib, ...), not the tins and their pinned versions.
 - **Fix:** mojoshelf: list only the tins, with version and rev.
+
+- **Tracked in** mojoshelf/mojoshelf#32.
 
 ## 20. deflate-mojo can't inflate a stream a window at a time (medium; fixed in deflate-mojo 0.2.0)
 
@@ -410,6 +422,8 @@ an hour or needs reading library source), **low** (friction).
   iceberg-mojo: a `ColumnBuilder` that appends bytes and integers without
   a `Datum` per cell.
 
+- **Tracked in** magmalake/json_mlake#5.
+
 ## 23. Writing a batch through iceberg-mojo peaks at ~10x the batch (medium; fixed in iceberg-mojo 0.9.0 with parquet-mojo 0.12.0)
 
 - **Happened:** one hour written as 50,000-row batches (~150 MB of
@@ -455,6 +469,8 @@ an hour or needs reading library source), **low** (friction).
   backend, or libdeflate's tricks (combined length/extra tables,
   multi-literal decode) in Mojo.
 
+- **Tracked in** magmalake/deflate.mojo#9, magmalake/deflate.mojo#11.
+
 ## 25. Overlapping a download with its decode takes a hand-made thread (low)
 
 - **Tried:** to decode each hour while it downloads, so an hour costs
@@ -480,6 +496,8 @@ an hour or needs reading library source), **low** (friction).
   and a `Body` that fills a buffer on its own thread with `available()` /
   `wait(n)`; threads-mojo: a typed `spawn` over an owned value, as
   `TypedPool` does for pools.
+
+- **Tracked in** magmalake/flare_mlake#15, magmalake/threads.mojo#20.
 
 ## 26. A rerun of an appending step appends again; orca.tables can't replace a partition (high)
 
@@ -568,6 +586,8 @@ an hour or needs reading library source), **low** (friction).
   hold any removed file's partition (the removed files' partitions are
   known from the plan that found them).
 
+- **Tracked in** magmalake/iceberg.mojo#82.
+
 ## 29. Two writers replacing the same partition: orca's commit retry replays a stale overwrite (medium)
 
 - **Tried:** a second pipeline (keyed on `mojo.repos`) to fill the history
@@ -586,6 +606,8 @@ an hour or needs reading library source), **low** (friction).
   does; orca: a commit retry that rebuilds its `FileChanges` through a
   callback, or that fails the attempt so the step recomputes.
 
+- **Tracked in** magmalake/iceberg.mojo#83, magmalake/orca.mojo#120.
+
 ## 30. A sensor's snapshot that arrives during a live run of its partition is dropped (medium)
 
 - **Tried:** mojo_activity as a sensor on `mojo.repos`, so the snapshot
@@ -603,6 +625,8 @@ an hour or needs reading library source), **low** (friction).
   pinned an older snapshot of the sensed dataset than the one that
   arrived.
 
+- **Tracked in** magmalake/orca.mojo#139.
+
 ## 31. No weekly partitions; list columns take another batch API (low)
 
 - **Tried:** a weekly refresh (`mojo_stats`) and a `topics` list column.
@@ -617,6 +641,8 @@ an hour or needs reading library source), **low** (friction).
 - **Fix:** orca: `Weekly[start]` (ISO weeks); iceberg-mojo:
   `ColumnBuilder.add_strings(List[String])` for lists of primitives and a
   `list_at` reader, and `ColumnTree` exported beside `batch_of_columns`.
+
+- **Tracked in** magmalake/orca.mojo#140, magmalake/iceberg.mojo#84.
 
 ---
 
@@ -635,6 +661,8 @@ an hour or needs reading library source), **low** (friction).
   (`hourindex.HourIndex.marker`).
 - **Fix:** iceberg should commit an empty append (a snapshot with no
   manifest), or write a zero-row file; orca's docstring says it can.
+
+- **Tracked in** magmalake/iceberg.mojo#85.
 
 ## 33. A repository found later needs every repository's history, so the index is big (medium)
 
