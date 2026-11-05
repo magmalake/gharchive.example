@@ -179,6 +179,7 @@ comptime GhArchive = Pipeline[
     tasks=GhTasks,
     partitions=Daily["2023-01-01"],
     schedule=Cron["0 3 * * *"],  # 03:00 UTC, for the day before
+    max_runs=2,  # two days at once: a day's commits (four tables an hour) are serial
     workers=8,
 ]
 
