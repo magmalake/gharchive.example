@@ -201,9 +201,20 @@ struct RepoInfo(Copyable, Movable):
     var size_kb: Int64
     var language: String
     var fork: Bool
+    var topics: List[String]
 
 
-def _long(s: String) -> Int64:
+def topics_of(b: Span[UInt8, _], obj: Range) -> List[String]:
+    """The `topics` array of a repository object."""
+    var out = List[String]()
+    for t in each(b, field(b, obj, "topics")):
+        var s = text(b, t)
+        if s.byte_length() > 0:
+            out.append(s^)
+    return out^
+
+
+def long_of(s: String) -> Int64:
     var v = Int64(0)
     for c in s.as_bytes():
         if c < 48 or c > 57:
@@ -225,14 +236,15 @@ def parse_repo(body: String) -> RepoInfo:
     return RepoInfo(
         text(b, field(b, all, "full_name")),
         timestamp_micros(b, field(b, all, "created_at")),
-        _long(text(b, field(b, all, "stargazers_count"))),
-        _long(text(b, field(b, all, "forks_count"))),
+        long_of(text(b, field(b, all, "stargazers_count"))),
+        long_of(text(b, field(b, all, "forks_count"))),
         license,
         text(b, field(b, all, "default_branch")),
         text(b, field(b, all, "description")),
-        _long(text(b, field(b, all, "size"))),
+        long_of(text(b, field(b, all, "size"))),
         text(b, field(b, all, "language")),
         text(b, field(b, all, "fork")) == "true",
+        topics_of(b, all),
     )
 
 
@@ -261,7 +273,7 @@ def _commit_touches_mojo(repo: String, sha: String, mut remaining: Int) raises -
 
 def verify(c: Candidate) raises -> Verdict:
     """Asks GitHub whether `c` is a Mojo repository."""
-    var empty = RepoInfo(c.repo, 0, 0, 0, "", "", "", 0, "", False)
+    var empty = RepoInfo(c.repo, 0, 0, 0, "", "", "", 0, "", False, List[String]())
     var r = github(String("/repos/", c.repo))
     if r.status == 403 or r.status == 429:
         return Verdict("limited", "", empty^, r.remaining)

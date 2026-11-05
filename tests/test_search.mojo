@@ -22,6 +22,17 @@ def test_ranking() raises:
     assert_equal(search_score("a/b", "c", "a/b"), 100)
 
 
+def test_topics() raises:
+    var t: List[String] = ["mojo", "Linear-Algebra"]
+    var topic = search_score("a/numbers", "fast", "linear-algebra", t)
+    var topic_part = search_score("a/numbers", "fast", "algebra", t)
+    var inside = search_score("a/my-algebra", "fast", "algebra")
+    var owner = search_score("algebra-org/x", "web", "algebra")
+    var desc = search_score("a/x", "algebra for all", "algebra")
+    assert_true(inside > topic and topic > owner and owner > topic_part and topic_part > desc)
+    assert_equal(search_score("a/numbers", "fast", "zzz", t), 0)
+
+
 def test_url_decode() raises:
     assert_equal(url_decode("a+b%20c%2Fd"), "a b c/d")
     assert_equal(url_decode("100%"), "100%")

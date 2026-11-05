@@ -5,9 +5,10 @@
 
 from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
-from history import History, _parse_log, _sh, is_mojo_file, safe_repo
-from dista import Seq
-from history import CommitRow, MigrationRow
+from std.os import getenv
+
+from history import History, _parse_log, _read_tags, _sh, is_mojo_file, safe_repo
+from history import CommitRow, MigrationRow, TagRow, join_tags, parse_tags
 
 
 def _log() -> String:
@@ -28,7 +29,7 @@ def _log() -> String:
 
 
 def test_lines_and_files() raises:
-    var h = History("o/r", String(), Seq[CommitRow](), Seq[MigrationRow]())
+    var h = History.empty("o/r")
     _parse_log("o/r", "/nonexistent", _log(), h)
     assert_equal(len(h.commits), 3)
     assert_equal(h.commits.items[0].mojo_lines, 15)
@@ -63,6 +64,68 @@ def test_safe_repo() raises:
     assert_false(safe_repo("a/b; rm -rf /"))
     assert_false(safe_repo("../etc"))
     assert_false(safe_repo("noslash"))
+
+
+def test_parse_tags() raises:
+    # Annotated (peeled to the commit), lightweight, a name with slashes,
+    # dots and non-ASCII, and lines that aren't tags or are cut short.
+    var out = String(
+        "refs/tags/v1.0\ttag\taaaa\tc0ffee\t1700000000\n",
+        "refs/tags/release/2024.1-rc\tcommit\tbbbb\t\t1700000500\n",
+        "refs/tags/n\u00e4me-\U0001f525\tcommit\tcccc\t\t1700000900\n",
+        "refs/heads/main\tcommit\tdddd\t\t1\n",
+        "refs/tags/broken\tcommit\n",
+        "refs/tags/nodate\tcommit\teeee\t\t\n",
+    )
+    var tags = parse_tags("o/r", out)
+    assert_equal(len(tags), 4)
+    # By bytes: "no" sorts before "n\xc3".
+    assert_equal(tags[0].tag, "nodate")
+    assert_equal(tags[0].tagged_at, 0)
+    assert_equal(tags[1].tag, "n\u00e4me-\U0001f525")
+    assert_equal(tags[2].tag, "release/2024.1-rc")
+    assert_false(tags[2].annotated)
+    assert_equal(tags[2].commit, "bbbb")
+    assert_equal(tags[3].tag, "v1.0")
+    assert_true(tags[3].annotated)
+    assert_equal(tags[3].commit, "c0ffee")
+    assert_equal(tags[3].tagged_at, 1700000000 * 1_000_000)
+    var by_sha = Dict[String, Tuple[String, String]]()
+    by_sha["c0ffee"] = (String("pixi"), String("25.4.0"))
+    join_tags(tags, by_sha)
+    assert_equal(tags[3].tooling, "pixi")
+    assert_equal(tags[3].mojo_version, "25.4.0")
+    assert_equal(tags[2].tooling, "")
+
+
+def test_tags_of_a_real_clone() raises:
+    # A repository with an annotated tag, a lightweight one and one whose
+    # name has a byte that isn't UTF-8 (git allows it; it comes back
+    # without that byte rather than failing).
+    var dir = String(getenv("TMPDIR", "/tmp"), "/mojo-census-test-tags")
+    var r = _sh(String(
+        "rm -rf '", dir, "' && git init -q '", dir, "' && cd '", dir, "'",
+        " && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m one",
+        " && GIT_COMMITTER_DATE='1700000000 +0000' git -c user.name=t -c user.email=t@t tag -a v1 -m 'first'",
+        " && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m two",
+        " && git tag light",
+        # macOS won't make a file whose name isn't UTF-8, so the third tag
+        # goes straight into packed-refs.
+        " && printf '%s refs/tags/caf\\351\\n' \"$(git rev-parse HEAD)\" >> .git/packed-refs",
+    ))
+    assert_equal(r[0], 0)
+    var h = History.empty("o/r")
+    _read_tags("o/r", String(dir, "/.git"), h)
+    assert_equal(len(h.tags), 3)
+    assert_equal(h.tags.items[0].tag, "caf")
+    assert_equal(h.tags.items[1].tag, "light")
+    assert_false(h.tags.items[1].annotated)
+    assert_equal(h.tags.items[2].tag, "v1")
+    assert_true(h.tags.items[2].annotated)
+    assert_equal(h.tags.items[2].tagged_at, 1700000000 * 1_000_000)
+    assert_equal(h.tags.items[2].commit.byte_length(), 40)
+    assert_true(h.tags.items[2].commit != h.tags.items[1].commit)
+    _ = _sh(String("rm -rf '", dir, "'"))
 
 
 def main() raises:

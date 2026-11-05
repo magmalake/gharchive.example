@@ -4,9 +4,10 @@ from std.os import getenv
 
 from iceberg.catalog.filesystem import FilesystemCatalog, Table
 from iceberg.io import FileIO
+from iceberg.json import json_quote
 from iceberg.schema import Schema
 from iceberg.transforms import PartitionField, PartitionSpec, parse_transform
-from iceberg.types import P_TIMESTAMPTZ
+from iceberg.types import P_DATE, P_TIMESTAMPTZ
 from iceberg.values import Datum
 
 comptime EVENTS = "gharchive.events"
@@ -14,6 +15,11 @@ comptime REPOS = "mojo.repos"
 comptime COMMITS = "mojo.commits"
 comptime MIGRATIONS = "mojo.migrations"
 comptime CHECKED = "mojo.checked"
+comptime REPO_STATS = "mojo.repo_stats"
+comptime ACTIVITY = "mojo.activity"
+comptime RELEASES = "mojo.releases"
+comptime ACTIVITY_REPOS = "mojo.activity_repos"
+comptime TAGS = "mojo.tags"
 
 comptime EVENTS_SCHEMA = (
     '{"schema-id":0,"type":"struct","fields":['
@@ -38,9 +44,12 @@ comptime REPOS_SCHEMA = (
     '{"id":9,"name":"description","required":false,"type":"string"},'
     '{"id":10,"name":"size_kb","required":false,"type":"long"},'
     '{"id":11,"name":"language","required":false,"type":"string"},'
-    '{"id":12,"name":"fork","required":false,"type":"boolean"}]}'
+    '{"id":12,"name":"fork","required":false,"type":"boolean"},'
+    '{"id":13,"name":"topics","required":false,"type":'
+    '{"type":"list","element-id":14,"element":"string","element-required":true}}]}'
 )
-"""mojo_history is keyed on `repo` (`owner/name`)."""
+"""mojo_history is keyed on `repo` (`owner/name`). `topics` came later
+(ensure_table adds it; rows from before read it as null)."""
 
 comptime COMMITS_SCHEMA = (
     '{"schema-id":0,"type":"struct","fields":['
@@ -78,6 +87,88 @@ comptime CHECKED_SCHEMA = (
 )
 """Every candidate mojo_repos asked GitHub about, so it asks once."""
 
+comptime REPO_STATS_SCHEMA = (
+    '{"schema-id":0,"type":"struct","fields":['
+    '{"id":1,"name":"repo","required":true,"type":"string"},'
+    '{"id":2,"name":"as_of","required":true,"type":"date"},'
+    '{"id":3,"name":"fetched_at","required":true,"type":"timestamptz"},'
+    '{"id":4,"name":"state","required":true,"type":"string"},'
+    '{"id":5,"name":"stars","required":false,"type":"long"},'
+    '{"id":6,"name":"forks","required":false,"type":"long"},'
+    '{"id":7,"name":"open_issues","required":false,"type":"long"},'
+    '{"id":8,"name":"watchers","required":false,"type":"long"},'
+    '{"id":9,"name":"topics","required":false,"type":'
+    '{"type":"list","element-id":10,"element":"string","element-required":true}},'
+    '{"id":11,"name":"archived","required":false,"type":"boolean"},'
+    '{"id":12,"name":"pushed_at","required":false,"type":"timestamptz"},'
+    '{"id":13,"name":"homepage","required":false,"type":"string"},'
+    '{"id":14,"name":"license","required":false,"type":"string"},'
+    '{"id":15,"name":"description","required":false,"type":"string"},'
+    '{"id":16,"name":"size_kb","required":false,"type":"long"},'
+    '{"id":17,"name":"default_branch","required":false,"type":"string"},'
+    '{"id":18,"name":"renamed_to","required":false,"type":"string"}]}'
+)
+"""One row per repository per weekly refresh (mojo_stats). `state` is `ok`,
+`renamed` (GitHub redirected to `renamed_to`), `gone` (404/410), `blocked`
+(451) or `error HTTP n`."""
+
+comptime ACTIVITY_SCHEMA = (
+    '{"schema-id":0,"type":"struct","fields":['
+    '{"id":1,"name":"repo","required":true,"type":"string"},'
+    '{"id":2,"name":"day","required":true,"type":"date"},'
+    '{"id":3,"name":"events","required":true,"type":"long"},'
+    '{"id":4,"name":"stars","required":true,"type":"long"},'
+    '{"id":5,"name":"forks","required":true,"type":"long"},'
+    '{"id":6,"name":"releases","required":true,"type":"long"},'
+    '{"id":7,"name":"issues_opened","required":true,"type":"long"},'
+    '{"id":8,"name":"prs_opened","required":true,"type":"long"},'
+    '{"id":9,"name":"pushes","required":true,"type":"long"},'
+    '{"id":10,"name":"actors","required":true,"type":"long"}]}'
+)
+"""A repository's GH Archive events on one day (UTC), for the repositories
+in mojo.repos; a row only for days with an event. `stars` counts
+WatchEvents, `forks` ForkEvents, `releases` published ReleaseEvents,
+`issues_opened`/`prs_opened` IssuesEvents/PullRequestEvents with action
+`opened`, `pushes` PushEvents, `actors` distinct actors of any event."""
+
+comptime RELEASES_SCHEMA = (
+    '{"schema-id":0,"type":"struct","fields":['
+    '{"id":1,"name":"repo","required":true,"type":"string"},'
+    '{"id":2,"name":"day","required":true,"type":"date"},'
+    '{"id":3,"name":"tag","required":true,"type":"string"},'
+    '{"id":4,"name":"name","required":false,"type":"string"},'
+    '{"id":5,"name":"published_at","required":false,"type":"timestamptz"},'
+    '{"id":6,"name":"prerelease","required":false,"type":"boolean"},'
+    '{"id":7,"name":"actor","required":false,"type":"string"}]}'
+)
+"""Published ReleaseEvents of the repositories in mojo.repos; `day` is the
+event's day, which the table is replaced by."""
+
+comptime ACTIVITY_REPOS_SCHEMA = (
+    '{"schema-id":0,"type":"struct","fields":['
+    '{"id":1,"name":"repo","required":true,"type":"string"},'
+    '{"id":2,"name":"added_at","required":true,"type":"timestamptz"},'
+    '{"id":3,"name":"days","required":true,"type":"long"}]}'
+)
+"""The repositories mojo_activity has caught up: their activity on every
+day gharchive.events had when they were added (`days`). Later days include
+them as members of mojo.repos."""
+
+comptime TAGS_SCHEMA = (
+    '{"schema-id":0,"type":"struct","fields":['
+    '{"id":1,"name":"repo","required":true,"type":"string"},'
+    '{"id":2,"name":"tag","required":true,"type":"string"},'
+    '{"id":3,"name":"commit","required":true,"type":"string"},'
+    '{"id":4,"name":"annotated","required":true,"type":"boolean"},'
+    '{"id":5,"name":"tagged_at","required":false,"type":"timestamptz"},'
+    '{"id":6,"name":"tooling","required":false,"type":"string"},'
+    '{"id":7,"name":"mojo_version","required":false,"type":"string"}]}'
+)
+"""Each repository's git tags (mojo_history): the commit a tag points at
+(peeled), the tagger's date for an annotated tag or the commit's for a
+lightweight one, and the tooling and Mojo version at that commit when it
+is on the first-parent history mojo.commits has."""
+
 
 def events_schema() raises -> Schema:
     return Schema.parse(EVENTS_SCHEMA)
@@ -89,6 +180,47 @@ def events_spec() raises -> PartitionSpec:
         0,
         [PartitionField.single(3, 1000, "created_day", parse_transform("day"))],
     )
+
+
+def _month_spec(source_id: Int, name: String) raises -> PartitionSpec:
+    return PartitionSpec(
+        0,
+        [PartitionField.single(source_id, 1000, name, parse_transform("month"))],
+    )
+
+
+def repo_stats_schema() raises -> Schema:
+    return Schema.parse(REPO_STATS_SCHEMA)
+
+
+def repo_stats_spec() raises -> PartitionSpec:
+    """By the month of `as_of`: about four refreshes a partition."""
+    return _month_spec(2, "as_of_month")
+
+
+def activity_schema() raises -> Schema:
+    return Schema.parse(ACTIVITY_SCHEMA)
+
+
+def activity_spec() raises -> PartitionSpec:
+    """By the month of `day`."""
+    return _month_spec(2, "month")
+
+
+def releases_schema() raises -> Schema:
+    return Schema.parse(RELEASES_SCHEMA)
+
+
+def releases_spec() raises -> PartitionSpec:
+    return _month_spec(2, "month")
+
+
+def activity_repos_schema() raises -> Schema:
+    return Schema.parse(ACTIVITY_REPOS_SCHEMA)
+
+
+def tags_schema() raises -> Schema:
+    return Schema.parse(TAGS_SCHEMA)
 
 
 def checked_schema() raises -> Schema:
@@ -110,6 +242,28 @@ def migrations_schema() raises -> Schema:
 def ts(micros: Int64) -> Datum:
     """A `timestamptz` value."""
     return Datum.integral(P_TIMESTAMPTZ, micros)
+
+
+def date(days: Int64) -> Datum:
+    """A `date` value: days since 1970-01-01."""
+    return Datum.integral(P_DATE, days)
+
+
+def ts_or_null(micros: Int64) -> Datum:
+    if micros == 0:
+        return Datum.none()
+    return ts(micros)
+
+
+def json_strings(items: List[String]) -> String:
+    """A `list<string>` cell for `NestedBuilder.add`."""
+    var out = String("[")
+    for i in range(len(items)):
+        if i > 0:
+            out += ","
+        out += json_quote(items[i])
+    out += "]"
+    return out^
 
 
 def str_or_null(s: String) -> Datum:
