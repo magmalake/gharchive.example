@@ -9,6 +9,9 @@ from std.testing import TestSuite, assert_equal, assert_true
 from charts import compact, donut, line_chart, nice_ceil
 from jscan import days_from_civil
 from listing import (
+    NEW_30D,
+    NEW_LAST_MONTH,
+    NEW_MONTH,
     ListQuery,
     list_url,
     parse_list_query,
@@ -143,6 +146,32 @@ def test_listing_query() raises:
     assert_equal(list_url(sorted_by(d, "stars")), "/repos?sort=stars")
     assert_equal(list_url(sorted_by(sorted_by(d, "stars"), "stars")), "/repos?sort=stars&dir=asc")
     assert_equal(list_url(with_version(q, "")), "/repos?sort=stars&dir=asc&active=1y")
+
+
+def test_select_new_and_commits30() raises:
+    var lines: List[Int64] = [900, 500, 100]
+    var files: List[Int64] = [1, 1, 1]
+    var stars: List[Int64] = [0, 0, 0]
+    var buckets: List[String] = ["1.2", "pre-1.0", "1.2"]
+    var legacy: List[String] = ["1.x", "0.26.x", "1.x"]
+    var active: List[Bool] = [True, True, True]
+    var news: List[Int] = [NEW_MONTH | NEW_30D, NEW_LAST_MONTH, 0]
+    var c30: List[Int64] = [3, 9, 5]
+    var month = select_repos(parse_list_query("", "", "", "", "month"), lines, files, stars, buckets, active, legacy, news, c30)
+    assert_equal(len(month), 1)
+    assert_equal(month[0], 0)
+    var last = select_repos(parse_list_query("", "", "", "", "last-month"), lines, files, stars, buckets, active, legacy, news, c30)
+    assert_equal(len(last), 1)
+    assert_equal(last[0], 1)
+    assert_equal(len(select_repos(parse_list_query("", "", "", "", "30d"), lines, files, stars, buckets, active, legacy, news, c30)), 1)
+    # Combined with the version filters, new and old.
+    assert_equal(len(select_repos(parse_list_query("", "", "pre-1.0", "", "month"), lines, files, stars, buckets, active, legacy, news, c30)), 0)
+    assert_equal(len(select_repos(parse_list_query("", "", "0.26.x", "", "last-month"), lines, files, stars, buckets, active, legacy, news, c30)), 1)
+    assert_equal(len(select_repos(parse_list_query("", "", "1.x", "", ""), lines, files, stars, buckets, active, legacy, news, c30)), 2)
+    var by = select_repos(parse_list_query("commits30", "", "", ""), lines, files, stars, buckets, active, legacy, news, c30)
+    var want: List[Int] = [1, 2, 0]
+    for i in range(3):
+        assert_equal(by[i], want[i])
 
 
 def test_select() raises:
