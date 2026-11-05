@@ -3,9 +3,17 @@
     pixi run test
 """
 
-from std.testing import TestSuite, assert_equal, assert_true
+from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
-from search import search_score, sort_families, url_decode, version_family
+from search import (
+    search_score,
+    sort_buckets,
+    sort_families,
+    url_decode,
+    version_bucket,
+    version_family,
+    version_matches,
+)
 
 
 def test_ranking() raises:
@@ -48,6 +56,40 @@ def test_family() raises:
     assert_equal(version_family("26.1"), "0.26.x")
     assert_equal(version_family("1.0.0"), "1.x")
     assert_equal(version_family("nightly"), "other")
+
+
+def test_bucket() raises:
+    assert_equal(version_bucket("24.6"), "pre-1.0")
+    assert_equal(version_bucket("25.1"), "pre-1.0")
+    assert_equal(version_bucket("0.25.7"), "pre-1.0")
+    assert_equal(version_bucket("0.26.1"), "pre-1.0")
+    assert_equal(version_bucket("26.1"), "pre-1.0")
+    assert_equal(version_bucket("1.0.0"), "1.0")
+    assert_equal(version_bucket("1.1.3"), "1.1")
+    assert_equal(version_bucket("1.2.0"), "1.2")
+    assert_equal(version_bucket("1.2.0.dev2026101905"), "1.2")
+    assert_equal(version_bucket("2.0.1"), "2.0")
+    assert_equal(version_bucket("*"), "other")
+    assert_equal(version_bucket(""), "other")
+
+
+def test_bucket_order() raises:
+    var bs: List[String] = ["1.10", "other", "1.2", "pre-1.0", "2.0", "1.0"]
+    var old: List[String] = ["", "", "", "", "", ""]
+    sort_buckets(bs, old)
+    var want: List[String] = ["pre-1.0", "1.0", "1.2", "1.10", "2.0", "other"]
+    for i in range(len(want)):
+        assert_equal(bs[i], want[i])
+
+
+def test_version_matches() raises:
+    assert_true(version_matches("1.2", "1.2", "1.x"))
+    assert_true(version_matches("1.x", "1.2", "1.x"))
+    assert_true(version_matches("0.26.x", "pre-1.0", "0.26.x"))
+    assert_false(version_matches("25.x", "pre-1.0", "0.26.x"))
+    assert_true(version_matches("pre-1.0", "pre-1.0", "24.x"))
+    assert_false(version_matches("1.x", "pre-1.0", "24.x"))
+    assert_true(version_matches("unknown", "unknown", "unknown"))
 
 
 def test_family_order() raises:

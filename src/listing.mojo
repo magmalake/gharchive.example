@@ -1,7 +1,7 @@
 """The Repos table's query: which column it sorts by, which filters it has,
 and the repositories that pass, from plain arrays so the tests need no lake.
 
-    /repos?sort=lines|files|stars&dir=asc|desc&version=1.x&active=1y
+    /repos?sort=lines|files|stars|commits30&dir=asc|desc&version=1.2&active=1y&new=month
 
 The default is the order the repositories come in (most lines of Mojo
 first), which is `sort=lines&dir=desc`.
@@ -11,27 +11,36 @@ first), which is `sort=lines&dir=desc`.
 @fieldwise_init
 struct ListQuery(Copyable, Movable):
     var sort: String
-    """`lines`, `files` or `stars`."""
+    """`lines`, `files`, `stars` or `commits30` (commits in 30 days)."""
     var asc: Bool
     var version: String
-    """A version family (`1.x`) or `unknown`; empty for any."""
+    """A version bucket (`pre-1.0`, `1.2`, `unknown`, `other`) or an old
+    family (`1.x`, `0.26.x`); empty for any."""
     var active: Bool
     """Only repositories with a commit in the last 12 months."""
+    var new: String
+    """When the first Mojo commit was: `month` (this UTC month),
+    `last-month` or `30d`; empty for any."""
 
     def is_default_order(self) -> Bool:
         return self.sort == "lines" and not self.asc
 
     def has_filter(self) -> Bool:
-        return self.version.byte_length() > 0 or self.active
+        return self.version.byte_length() > 0 or self.active or self.new.byte_length() > 0
 
 
-def parse_list_query(sort: String, dir: String, version: String, active: String) -> ListQuery:
+def parse_list_query(
+    sort: String, dir: String, version: String, active: String, new: String = String()
+) -> ListQuery:
     """The query from the raw parameters; what isn't recognised is the
     default."""
     var s = String("lines")
-    if sort == "files" or sort == "stars":
+    if sort == "files" or sort == "stars" or sort == "commits30":
         s = sort
-    return ListQuery(s, dir == "asc", String(version.strip()), active == "1y")
+    var n = String()
+    if new == "month" or new == "last-month" or new == "30d":
+        n = new
+    return ListQuery(s, dir == "asc", String(version.strip()), active == "1y", n)
 
 
 def list_url(q: ListQuery, base: String = "/repos") -> String:
@@ -45,6 +54,8 @@ def list_url(q: ListQuery, base: String = "/repos") -> String:
         parts.append(String("version=", q.version))
     if q.active:
         parts.append(String("active=1y"))
+    if q.new.byte_length() > 0:
+        parts.append(String("new=", q.new))
     if len(parts) == 0:
         return base
     var out = String(base, "?")
@@ -59,16 +70,34 @@ def sorted_by(q: ListQuery, column: String) -> ListQuery:
     """`q` after clicking `column`'s header: the same column flips the
     direction, another starts largest first."""
     if q.sort == column:
-        return ListQuery(q.sort, not q.asc, q.version, q.active)
-    return ListQuery(column, False, q.version, q.active)
+        return ListQuery(q.sort, not q.asc, q.version, q.active, q.new)
+    return ListQuery(column, False, q.version, q.active, q.new)
 
 
 def with_version(q: ListQuery, version: String) -> ListQuery:
-    return ListQuery(q.sort, q.asc, version, q.active)
+    return ListQuery(q.sort, q.asc, version, q.active, q.new)
 
 
 def with_active(q: ListQuery, active: Bool) -> ListQuery:
-    return ListQuery(q.sort, q.asc, q.version, active)
+    return ListQuery(q.sort, q.asc, q.version, active, q.new)
+
+
+def with_new(q: ListQuery, new: String) -> ListQuery:
+    return ListQuery(q.sort, q.asc, q.version, q.active, new)
+
+
+comptime NEW_MONTH = 1
+comptime NEW_LAST_MONTH = 2
+comptime NEW_30D = 4
+
+
+def new_bit(new: String) -> Int:
+    """The bit of `new` in `select_repos`'s `news` masks."""
+    if new == "month":
+        return NEW_MONTH
+    if new == "last-month":
+        return NEW_LAST_MONTH
+    return NEW_30D
 
 
 def select_repos(
@@ -78,6 +107,9 @@ def select_repos(
     stars: List[Int64],
     families: List[String],
     active: List[Bool],
+    legacy: List[String] = List[String](),
+    news: List[Int] = List[Int](),
+    commits30: List[Int64] = List[Int64](),
 ) -> List[Int]:
     """The indices of the repositories that pass `q`'s filters, in its
     order. The arrays are one entry per repository, in the default order;
@@ -85,6 +117,9 @@ def select_repos(
     var idx = List[Int]()
     for i in range(len(lines)):
         if q.version.byte_length() > 0 and families[i] != q.version:
+            if len(legacy) == 0 or legacy[i] != q.version:
+                continue
+        if q.new.byte_length() > 0 and (len(news) == 0 or news[i] & new_bit(q.new) == 0):
             continue
         if q.active and not active[i]:
             continue
@@ -95,6 +130,8 @@ def select_repos(
         return _merge_sort(idx^, files, q.asc)
     if q.sort == "stars":
         return _merge_sort(idx^, stars, q.asc)
+    if q.sort == "commits30" and len(commits30) == len(lines):
+        return _merge_sort(idx^, commits30, q.asc)
     return _merge_sort(idx^, lines, q.asc)
 
 

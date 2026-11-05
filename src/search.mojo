@@ -101,3 +101,51 @@ def sort_families(mut fs: List[String], mut oldest: List[String]):
             fs.swap_elements(j - 1, j)
             oldest.swap_elements(j - 1, j)
             j -= 1
+
+
+def version_bucket(v: String) -> String:
+    """`pre-1.0` for every version before Mojo 1.0 (24.x, 25.x, 0.25.x, 0.26.x,
+    the calendar 26.1), else `<major>.<minor>` (`1.0`, `1.2`; a nightly
+    `1.2.0.dev2026101905` is on `1.2`); a string that isn't a version is
+    `other`."""
+    var key = version_key(v)
+    if len(key) == 0:
+        return String("other")
+    if key[0] < 100:
+        return String("pre-1.0")
+    return String(key[0] - 100, ".", key[1])
+
+
+def bucket_rank(b: String) -> Int:
+    """Where bucket `b` sits in Mojo's order: `pre-1.0`, then `1.0`, `1.1`,
+    ..., then `other`, `unknown`."""
+    if b == "pre-1.0":
+        return 0
+    if b == "other":
+        return 1_000_000_000
+    if b == "unknown":
+        return 2_000_000_000
+    var dot = b.find(".")
+    if dot < 0:
+        return 1_000_000_000
+    try:
+        return Int(String(b[byte=:dot])) * 100_000 + Int(String(b[byte = dot + 1 :])) + 1
+    except:
+        return 1_000_000_000
+
+
+def sort_buckets(mut bs: List[String], mut oldest: List[String]):
+    """`bs` in Mojo's order (`bucket_rank`); `oldest` is swapped along."""
+    for i in range(1, len(bs)):
+        var j = i
+        while j > 0 and bucket_rank(bs[j - 1]) > bucket_rank(bs[j]):
+            bs.swap_elements(j - 1, j)
+            oldest.swap_elements(j - 1, j)
+            j -= 1
+
+
+def version_matches(want: String, bucket: String, family: String) -> Bool:
+    """Whether a repo on `bucket` (and the old `family`) passes the
+    `?version=` value `want`: a bucket (`1.2`, `pre-1.0`, `unknown`) or one of
+    the old families (`1.x`, `0.26.x`, `25.x`), which old links still use."""
+    return want == bucket or want == family

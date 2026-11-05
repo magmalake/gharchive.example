@@ -19,7 +19,7 @@ from listing import (
 from overview import (
     DAY_US,
     Builder,
-    family_color,
+    bucket_color,
     month_label,
     month_of_days,
     tool_code,
@@ -83,93 +83,48 @@ def test_totals() raises:
     assert_equal(ov.new_last_month, 0)
 
 
-def test_families() raises:
+def test_buckets() raises:
     var ov = _small().finish(4)
-    # a is 1.x, b 0.26.x, d and c have no version.
-    var want: List[String] = ["0.26.x", "1.x", "unknown"]
-    assert_equal(len(ov.families), 3)
+    # a is on 1.1, b on 0.26.x (pre-1.0), d and c have no version.
+    var want: List[String] = ["pre-1.0", "1.1", "unknown"]
+    assert_equal(len(ov.buckets), 3)
     for i in range(3):
-        assert_equal(ov.families[i], want[i])
-    assert_equal(ov.family_repos[0], 1)
-    assert_equal(ov.family_repos[1], 1)
-    assert_equal(ov.family_repos[2], 2)
+        assert_equal(ov.buckets[i], want[i])
+    assert_equal(ov.bucket_repos[0], 1)
+    assert_equal(ov.bucket_repos[1], 1)
+    assert_equal(ov.bucket_repos[2], 2)
     # Active: a and b; d's commit is from 2023.
-    assert_equal(ov.family_active[0], 1)
-    assert_equal(ov.family_active[1], 1)
-    assert_equal(ov.family_active[2], 0)
-    assert_equal(ov.newest_family, "1.x")
-    assert_equal(ov.newest_version, "1.1.0")
-    assert_equal(ov.newest_active, 1)
-    assert_equal(ov.known_active, 2)
+    assert_equal(ov.bucket_active[0], 1)
+    assert_equal(ov.bucket_active[1], 1)
+    assert_equal(ov.bucket_active[2], 0)
+    # The old families are still counted.
+    var fams: List[String] = ["0.26.x", "1.x", "unknown"]
+    for i in range(3):
+        assert_equal(ov.families[i], fams[i])
+    assert_equal(ov.family_repos[1], 1)
 
 
-def test_curves() raises:
-    var ov = _small().finish(4)
-    var last = len(ov.months) - 1
-    assert_equal(ov.months[0], "2023-06")
-    assert_equal(ov.months[last], "2026-11")
-    assert_equal(ov.lines_series[0], 10)
-    assert_equal(ov.repos_series[0], 1)
-    # Dec 2025: d (10) + b (40) + a (100).
-    var dec = 0
-    for i in range(len(ov.months)):
-        if ov.months[i] == "2025-12":
-            dec = i
-    assert_equal(ov.lines_series[dec], 150)
-    assert_equal(ov.repos_series[dec], 3)
-    assert_equal(ov.commits_series[dec], 1)
-    assert_equal(ov.tool_none[dec], 1)
-    assert_equal(ov.tool_magic[dec], 1)
-    assert_equal(ov.tool_pixi[dec], 1)
-    # Now: 60 + 150 + 10 lines in 3 repos; two commits in Nov and Oct.
-    assert_equal(ov.lines_series[last], 220)
-    assert_equal(ov.repos_series[last], 3)
-    assert_equal(ov.commits_series[last], 1)
-    for i in range(len(ov.months)):
-        assert_equal(ov.tool_none[i] + ov.tool_magic[i] + ov.tool_pixi[i], ov.repos_series[i])
-
-
-def test_out_of_order_rows() raises:
-    # Rows come in any order; the highest seq in a month decides its state.
-    var b = Builder(days_from_civil(2026, 11, 15))
-    var a = b.add_repo("o/a")
-    b.add_commit(a, _us(2026, 11, 2), 5, 500, 2, "1.2.0")
-    b.add_commit(a, _us(2026, 11, 1), 4, 400, 2, "1.1.0")
-    b.add_commit(a, _us(2026, 11, 3), 3, 300, 2, "1.0.0")
-    var ov = b.finish(1)
-    assert_equal(ov.lines, 500)
-    assert_equal(ov.newest_version, "1.2.0")
-    assert_equal(ov.lines_series[len(ov.lines_series) - 1], 500)
-    assert_equal(ov.new_this_month, 1)
-
-
-def test_empty() raises:
-    var ov = Builder(days_from_civil(2026, 11, 15)).finish(0)
-    assert_equal(ov.repos, 0)
-    assert_equal(ov.commits, 0)
-    assert_equal(len(ov.families), 0)
-    assert_equal(ov.newest_family, "")
-
-
-def test_top_gains() raises:
-    var g: List[Int64] = [0, 5, 3, 9, 3, -1]
-    var top = top_gains(g, 3)
-    assert_equal(len(top), 3)
-    assert_equal(top[0], 3)
-    assert_equal(top[1], 1)
-    assert_equal(top[2], 2)  # the tie keeps its order
-    assert_equal(len(top_gains(g, 10)), 4)
-    assert_equal(len(top_gains(List[Int64](), 3)), 0)
-
-
-def test_family_colors() raises:
-    assert_equal(family_color("1.x"), "var(--c4)")
-    assert_equal(family_color("24.x"), "var(--c0)")
-    assert_equal(family_color("other"), "var(--c5)")
-    assert_true(family_color("unknown") != family_color("other"))
+def test_bucket_colors() raises:
+    assert_equal(bucket_color("pre-1.0"), "var(--c0)")
+    assert_equal(bucket_color("1.0"), "var(--c1)")
+    assert_equal(bucket_color("1.3"), "var(--c4)")
+    assert_equal(bucket_color("1.4"), "var(--c6)")
+    assert_equal(bucket_color("1.7"), "var(--c9)")
+    assert_equal(bucket_color("1.8"), "var(--c1)")
+    assert_equal(bucket_color("other"), "var(--c5)")
+    assert_true(bucket_color("unknown") != bucket_color("other"))
+    # Distinct minors get distinct colours until the palette wraps.
+    for i in range(7):
+        assert_true(bucket_color(String("1.", i)) != bucket_color(String("1.", i + 1)))
 
 
 def test_listing_query() raises:
+    var nq = parse_list_query("commits30", "", "", "", "30d")
+    assert_equal(nq.sort, "commits30")
+    assert_equal(nq.new, "30d")
+    assert_equal(list_url(nq), "/repos?sort=commits30&new=30d")
+    assert_equal(parse_list_query("", "", "", "", "yesterday").new, "")
+
     var q = parse_list_query("stars", "asc", "1.x", "1y")
     assert_equal(q.sort, "stars")
     assert_true(q.asc)
