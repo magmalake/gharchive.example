@@ -293,3 +293,14 @@ def exists(namespace: String, name: String) raises -> Bool:
             String(root.rstrip("/")), FileIO()
         ).table_exists(namespace, name)
     return FilesystemCatalog.local(root).table_exists(namespace, name)
+
+
+def try_load(namespace: String, name: String) raises -> Optional[Table]:
+    """The table, or none when it doesn't exist. One round trip to the
+    store when it does (`exists` then `load` is two or three)."""
+    try:
+        return load(namespace, name)
+    except e:
+        if exists(namespace, name):
+            raise e^
+        return None

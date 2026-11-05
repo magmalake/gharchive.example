@@ -6,7 +6,8 @@ latest row of mojo.repo_stats; and per repository its activity by month
 from cols import bool_at, col, has_col, i32_at, i64_at, is_valid, str_at, strs_at
 from days import day_text
 from jscan import micros_to_iso
-from lake import exists, load
+from lake import exists, load, try_load
+from overview import Builder, tool_code
 from versions import compare_versions
 
 
@@ -67,13 +68,17 @@ def day(micros: Int64) -> String:
     return String(iso[byte=:10])
 
 
-def libraries() raises -> List[Library]:
-    """Every library, biggest (lines of Mojo now) first."""
+def libraries(mut ob: Builder) raises -> List[Library]:
+    """Every library, biggest (lines of Mojo now) first. Each commit row is
+    also given to `ob` (the Overview's numbers), so the commits are scanned
+    once for both."""
     var out = List[Library]()
-    if not exists("mojo", "repos"):
+    var repos_table = try_load("mojo", "repos")
+    if not repos_table:
         return out^
     var index = Dict[String, Int]()
-    for b in load("mojo", "repos").scan().to_batches():
+    var ids = List[Int]()
+    for b in repos_table.value().scan().to_batches():
         var c_repo = col(b, "repo")
         var c_desc = col(b, "description")
         var c_created = col(b, "created_at")
@@ -89,6 +94,7 @@ def libraries() raises -> List[Library]:
             if repo in index:
                 continue
             index[repo] = len(out)
+            ids.append(ob.add_repo(repo))
             out.append(
                 Library(
                     repo,
@@ -106,10 +112,11 @@ def libraries() raises -> List[Library]:
                 )
             )
     _latest_stats(out, index)
-    if exists("mojo", "commits"):
+    var commits_table = try_load("mojo", "commits")
+    if commits_table:
         var last_seq = Dict[String, Int64]()
         for b in (
-            load("mojo", "commits")
+            commits_table.value()
             .scan()
             .select(["repo", "committed_at", "seq", "mojo_lines", "mojo_files", "tooling", "mojo_version"])
             .to_batches()
@@ -128,6 +135,10 @@ def libraries() raises -> List[Library]:
                 ref lib = out[index[repo]]
                 var at = i64_at(b.column(c_at), r)
                 var seq = i64_at(b.column(c_seq), r)
+                ob.add_commit(
+                    ids[index[repo]], at, seq, i64_at(b.column(c_lines), r),
+                    tool_code(str_at(b.column(c_tool), r)), str_at(b.column(c_ver), r),
+                )
                 lib.commits += 1
                 if lib.first_commit == 0 or at < lib.first_commit:
                     lib.first_commit = at
@@ -150,9 +161,10 @@ def libraries() raises -> List[Library]:
 def _latest_stats(mut libs: List[Library], index: Dict[String, Int]) raises:
     """Each library's stars, forks and topics from its latest row of
     mojo.repo_stats, when it has one with numbers."""
-    if not exists("mojo", "repo_stats"):
+    var stats_table = try_load("mojo", "repo_stats")
+    if not stats_table:
         return
-    for b in load("mojo", "repo_stats").scan().to_batches():
+    for b in stats_table.value().scan().to_batches():
         var c_repo = col(b, "repo")
         var c_as_of = col(b, "as_of")
         var c_state = col(b, "state")
@@ -439,4 +451,92 @@ def versions_by_month() raises -> List[VersionMonth]:
         ):
             out.swap_elements(j - 1, j)
             j -= 1
+    return out^
+
+
+struct Sources(Copyable, Movable):
+    """Where the console's data stood when it was read: the current
+    snapshot of each table it builds pages from, to tell when anything
+    changed."""
+
+    var ids: List[Int64]
+    """The current snapshot id of each table `read_sources` looks at (repos,
+    commits, repo_stats, activity), -1 for a table that doesn't exist or is
+    empty."""
+    var as_of_ms: Int64
+    """The newest snapshot time of those tables."""
+    var days: Int
+    """GH Archive days loaded into gharchive.events (`read_days`)."""
+    var first_day: String
+    var last_day: String
+
+    def __init__(out self):
+        self.ids = List[Int64]()
+        self.as_of_ms = 0
+        self.days = 0
+        self.first_day = String()
+        self.last_day = String()
+
+    def same_as(self, other: Sources) -> Bool:
+        if len(self.ids) != len(other.ids):
+            return False
+        for i in range(len(self.ids)):
+            if self.ids[i] != other.ids[i]:
+                return False
+        return True
+
+
+def read_sources() raises -> Sources:
+    """The snapshots the tables are at now (metadata only) and the time of
+    the newest."""
+    var out = Sources()
+    var names: List[String] = ["repos", "commits", "repo_stats", "activity"]
+    for name in names:
+        var t = try_load("mojo", name)
+        if not t or not t.value().metadata.has_current_snapshot:
+            out.ids.append(-1)
+            continue
+        out.ids.append(t.value().metadata.current_snapshot_id)
+        out.as_of_ms = max(out.as_of_ms, t.value().metadata.current_snapshot().timestamp_ms)
+    return out^
+
+
+def read_days(mut src: Sources) raises:
+    """Count the GH Archive days gharchive.events holds into `src`: the days
+    its snapshots' `orca.partitions` name."""
+    var t = try_load("gharchive", "events")
+    if not t:
+        return
+    var seen = Dict[String, Bool]()
+    for ref s in t.value().metadata.snapshots:
+        for key in s.summary.get("orca.partitions", String("")).split(","):
+            var k = String(key.strip())
+            # A day looks like 2026-10-13; other keys aren't counted.
+            if k.byte_length() == 10 and k[byte=4] == "-" and k not in seen:
+                seen[k] = True
+                if src.first_day.byte_length() == 0 or k < src.first_day:
+                    src.first_day = k
+                if k > src.last_day:
+                    src.last_day = k
+    src.days = len(seen)
+
+
+def star_gains(since_day: Int) raises -> Dict[String, Int64]:
+    """Stars (WatchEvents) per repository on the days since `since_day`
+    (days since 1970-01-01), from mojo.activity."""
+    var out = Dict[String, Int64]()
+    var activity_table = try_load("mojo", "activity")
+    if not activity_table:
+        return out^
+    for b in activity_table.value().scan().select(["repo", "day", "stars"]).to_batches():
+        var c_repo = col(b, "repo")
+        var c_day = col(b, "day")
+        var c_stars = col(b, "stars")
+        for r in range(b.num_rows):
+            if Int(i32_at(b.column(c_day), r)) < since_day:
+                continue
+            var n = i64_at(b.column(c_stars), r)
+            if n > 0:
+                var repo = str_at(b.column(c_repo), r)
+                out[repo] = out.get(repo, Int64(0)) + n
     return out^

@@ -17,7 +17,7 @@ build-mojo-activity = "mkdir -p build && mojo build -I src pipelines/mojo_activi
 build-mojo-stats = "mkdir -p build && mojo build -I src pipelines/mojo_stats.mojo -o build/mojo_stats"
 build-pipelines = { depends-on = ["build-gharchive", "build-mojo-repos", "build-mojo-history", "build-mojo-activity", "build-mojo-stats"] }
 build = { depends-on = ["build-orca", "build-pipelines", "build-console"] }
-test = "mojo run -I src tests/test_versions.mojo && mojo run -I src tests/test_history.mojo && mojo run -I src tests/test_datafiles.mojo && mojo run -I src tests/test_jscan.mojo && mojo run -I src tests/test_events.mojo && mojo run -I src tests/test_search.mojo && mojo run -I src tests/test_activity.mojo && mojo run -I src tests/test_stats.mojo"
+test = "mojo run -I src tests/test_versions.mojo && mojo run -I src tests/test_history.mojo && mojo run -I src tests/test_datafiles.mojo && mojo run -I src tests/test_jscan.mojo && mojo run -I src tests/test_events.mojo && mojo run -I src tests/test_search.mojo && mojo run -I src tests/test_activity.mojo && mojo run -I src tests/test_stats.mojo && mojo run -I src tests/test_overview.mojo"
 
 [dependencies]
 mojo-compiler = "==1.2.0"
