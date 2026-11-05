@@ -175,7 +175,8 @@ comptime GhArchiveIndex = Pipeline[
     IndexDay,
     tasks=IndexTasks,
     partitions=Daily["2023-01-01"],
-    workers=4,
+    max_runs=3,  # days are disjoint partitions; the step's commits are serial
+    workers=8,
 ]
 
 
