@@ -207,6 +207,21 @@ modular/modular, which was skipped for size), 3 histories read, 372
 commits and 27 migrations. The end of [GAPS.md](GAPS.md) has the run as the
 scheduler did it, on orca 0.3.1.
 
+## Table history
+
+Every table keeps thirty days of snapshots (orca's default) and
+`gharchive.events` a week (`lake.events_properties`, 168 hourly commits);
+each commit deletes the metadata files beyond the last hundred. The
+scheduler expires every table by that policy once a day through
+`build/orca_maintain` (`bin/orca_maintain.mojo`, built by `pixi run build`
+beside `orca`), keeping whatever a run that can still resume read or
+committed, and the last run's snapshots. By hand:
+
+```
+./build/orca expire gharchive.events --older-than 7d --dry-run --report
+./build/orca expire --all          # each table by its own policy
+```
+
 ## What's left for AWS
 
 Not done in this local run:

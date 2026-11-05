@@ -174,6 +174,16 @@ def events_schema() raises -> Schema:
     return Schema.parse(EVENTS_SCHEMA)
 
 
+def events_properties() -> Dict[String, String]:
+    """gharchive.events' table properties beyond orca's defaults: a week of
+    snapshots (168 hourly commits) instead of thirty days, which keeps its
+    `metadata.json`, rewritten on every commit, small. The scheduler's
+    expiry also keeps whatever a live run still needs."""
+    var p = Dict[String, String]()
+    p["history.expire.max-snapshot-age-ms"] = String(7 * 86_400_000)
+    return p^
+
+
 def events_spec() raises -> PartitionSpec:
     """gharchive.events is partitioned by the day of `created_at`."""
     return PartitionSpec(

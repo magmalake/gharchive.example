@@ -514,7 +514,7 @@ an hour or needs reading library source), **low** (friction).
   `orca backfill --rerun` should warn for a step that appends.
   [magmalake/orca.mojo issue](https://github.com/magmalake/orca.mojo/issues/120).
 
-## 27. Snapshot expiry is quadratic, and commits slow down with every metadata file (medium)
+## 27. Snapshot expiry is quadratic, and commits slow down with every metadata file (medium; fixed in iceberg-mojo 0.10.0 and orca 0.4.0)
 
 - **Tried:** to expire `gharchive.events`' old snapshots (888 of them, a
   937 KB `metadata.json` rewritten on every commit), or to have iceberg-mojo
@@ -536,6 +536,26 @@ an hour or needs reading library source), **low** (friction).
   with `previous-versions-max`; use `version-hint.text` before listing.
   orca: an `expire_snapshots(ctx, table, older_than_days)` step helper
   that refuses snapshots a live run has pinned.
+- **Fixed:** iceberg-mojo 0.10.0 expires in linear time: each manifest
+  list is read once (batched), only manifests that no retained snapshot
+  lists are opened, and their files are checked only against the retained
+  manifests a rewrite could have carried them into (591,513 reads and 57 s
+  on a local 1,000-snapshot table become 1,097 reads and 0.27 s). Retention
+  follows the spec (per-branch `min-snapshots-to-keep`, age, tags,
+  `max-ref-age-ms`, the `history.expire.*` properties).
+  `write.metadata.previous-versions-max` and
+  `write.metadata.delete-after-commit.enabled` are honoured. A commit no
+  longer lists `metadata/`: it does one prefix listing for the version it
+  writes and reads `version-hint.text`. Appends fold small manifests
+  (merge-append), so the manifest list stops growing by one entry per
+  commit. orca 0.4.0 gives every table delete-after-commit, a hundred
+  previous versions and thirty days of history (`ensure_table(...,
+  properties=)` overrides them; gharchive.events keeps seven days). It has
+  `orca expire <dataset>|--all` and a daily sweep in the scheduler, both
+  through `bin/orca_maintain.mojo`. They keep the snapshots that runs which
+  can still resume read or committed, and the last run's commits.
+  mojo_activity's `_loaded_days` reads the pinned snapshot's partitions
+  instead of walking the snapshot history, which expiry now cuts.
 
 ## 28. Removing files reads every manifest, even of other partitions (low)
 
