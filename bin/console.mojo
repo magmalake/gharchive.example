@@ -131,7 +131,8 @@ def _page(title: String, var body: String, section: String) raises -> Response:
     the brand alone; others read "<title> · Mojo census"."""
     var full = String(BRAND) if title == "" else String(title, " · ", BRAND)
     var h = String(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>",
+        "<!doctype html><html lang=en><head><meta charset=utf-8>"
+        "<link rel=icon href=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23b45309'/%3E%3Crect x='3' y='8' width='2.5' height='5' fill='%23fff'/%3E%3Crect x='6.75' y='4' width='2.5' height='9' fill='%23fff'/%3E%3Crect x='10.5' y='6' width='2.5' height='7' fill='%23fff'/%3E%3C/svg%3E\">",
         "<meta name=viewport content='width=device-width,initial-scale=1'>",
         "<meta name=color-scheme content='light dark'>",
         "<meta name=description content='", html_escape(DESCRIPTION), "'>",
@@ -140,7 +141,7 @@ def _page(title: String, var body: String, section: String) raises -> Response:
         "<nav>", _nav("/", "Libraries", section == "libraries"),
         _nav("/versions", "Versions", section == "versions"),
         "<span class=sep aria-hidden=true></span>",
-        "<a href='https://mlake.dev' rel=noopener>mlake.dev<span class=arrow> &#8599;</span></a></nav></div></header>",
+        "<a href='https://orca.mlake.dev' rel=noopener title='The pipelines that build this census'>orca<span class=arrow> &#8599;</span></a><a href='https://mlake.dev' rel=noopener>mlake.dev<span class=arrow> &#8599;</span></a></nav></div></header>",
         "<main><div class=wrap>", body, "</div></main>",
         "<footer><div class=wrap><p>An independent project; Mojo is a trademark of Modular Inc.",
         " Data from <a href='https://www.gharchive.org' rel=noopener>GH Archive</a>, read by the",
