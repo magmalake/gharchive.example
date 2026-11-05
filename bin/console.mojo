@@ -39,6 +39,7 @@ from model import (
 )
 
 comptime STYLE = """
+.prose{max-width:72ch}.prose p,.prose li{line-height:1.6}.prose ul{padding-left:1.2em}.prose li{margin:6px 0}
 *{box-sizing:border-box}
 :root{color-scheme:light;--bg:#fbf9f7;--bg-alt:#f4f0ec;--surface:#fff;--surface-2:#f8f5f2;--border:#e3dcd4;--border-strong:#cfc5ba;--text:#17151a;--muted:#6b645d;--faint:#948c84;--ember:#c33c10;--ember-wash:#fdefe7;--lake:#0d6a70;--shadow:0 1px 2px rgb(23 21 26 / .04),0 8px 24px -12px rgb(23 21 26 / .12);--radius:10px;--radius-sm:6px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 @media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#0e0d11;--bg-alt:#131218;--surface:#17161d;--surface-2:#1c1b23;--border:#2a2833;--border-strong:#3d3a48;--text:#eeeae4;--muted:#a49d95;--faint:#7b746d;--ember:#ff7a45;--ember-wash:#2a1710;--lake:#4ecdc4;--shadow:0 1px 2px rgb(0 0 0 / .4),0 8px 24px -12px rgb(0 0 0 / .6)}}
@@ -126,7 +127,7 @@ comptime DESCRIPTION = (
 
 
 def _page(title: String, var body: String, section: String) raises -> Response:
-    """The page around `body`; `section` is `libraries` or `versions`, the
+    """The page around `body`; `section` is `libraries`, `versions` or `how`, the
     nav entry to light up. An empty `title` is the home page, titled with
     the brand alone; others read "<title> · Mojo census"."""
     var full = String(BRAND) if title == "" else String(title, " · ", BRAND)
@@ -140,6 +141,7 @@ def _page(title: String, var body: String, section: String) raises -> Response:
         "<header class=top><div class=wrap><a class=brand href='/'>", MARK, BRAND, "</a>",
         "<nav>", _nav("/", "Libraries", section == "libraries"),
         _nav("/versions", "Versions", section == "versions"),
+        _nav("/how", "How it works", section == "how"),
         "<span class=sep aria-hidden=true></span>",
         "<a href='https://orca.mlake.dev' rel=noopener title='The pipelines that build this census'>orca<span class=arrow> &#8599;</span></a><a href='https://mlake.dev' rel=noopener>mlake.dev<span class=arrow> &#8599;</span></a></nav></div></header>",
         "<main><div class=wrap>", body, "</div></main>",
@@ -511,10 +513,110 @@ def repo_json(req: Request) raises -> Response:
         return internal_error(String(e))
 
 
+comptime ORCA_DOCS = "https://mlake.dev/s/orca/docs"
+comptime ORCA_UI = "https://orca.mlake.dev"
+comptime GH = "https://github.com/magmalake"
+
+comptime HOW = (
+    "<div class=prose><h1>How it works</h1><p class=lead>The census is three"
+    " pipelines and this page, all Mojo. The pipelines run on <a href='"
+    + ORCA_DOCS
+    + "' rel=noopener>orca</a>, magmalake's pipeline orchestrator, on AWS; they"
+    " write Iceberg tables to S3, and this site reads them.</p>"
+    "<ul><li><a href='"
+    + ORCA_UI
+    + "/pipelines/gharchive' rel=noopener>gharchive</a> loads each day of"
+    " <a href='https://www.gharchive.org' rel=noopener>GH Archive</a>, every"
+    " public GitHub event, into <code>gharchive.events</code> at 03:00 UTC for"
+    " the day before. Each hour is a <a href='https://mlake.dev/s/dista/docs'"
+    " rel=noopener>dista</a> task on a worker instance, which downloads, gunzips,"
+    " parses and writes its Parquet files; the step commits the hours in order.</li>"
+    "<li><a href='"
+    + ORCA_UI
+    + "/pipelines/mojo_repos' rel=noopener>mojo_repos</a> is a sensor on that"
+    " table. For each new day it finds the repositories that might hold Mojo,"
+    " checks them with GitHub, and keeps the Mojo ones in <code>mojo.repos</code>.</li>"
+    "<li><a href='"
+    + ORCA_UI
+    + "/pipelines/mojo_history' rel=noopener>mojo_history</a> is keyed by"
+    " repository: each new one is cloned and its history read, the Mojo files"
+    " and lines at each commit into <code>mojo.commits</code> and each change of"
+    " Mojo version in its lock file into <code>mojo.migrations</code>.</li></ul>"
+    "<p>Every run, with its steps, logs, machines and the tables it wrote, is on"
+    " <a href='"
+    + ORCA_UI
+    + "/runs' rel=noopener>orca.mlake.dev</a>. The orca docs cover <a href='"
+    + ORCA_DOCS
+    + "/build' rel=noopener>writing a pipeline</a>, <a href='"
+    + ORCA_DOCS
+    + "/run' rel=noopener>running it</a>, <a href='"
+    + ORCA_DOCS
+    + "/ui' rel=noopener>the web UI</a> and <a href='"
+    + ORCA_DOCS
+    + "/debug' rel=noopener>debugging a failed run</a>; the census's own code"
+    " is <a href='"
+    + GH
+    + "/mojo-census' rel=noopener>magmalake/mojo-census</a>, and the <a"
+    " href='https://mlake.dev/getting-started/' rel=noopener>getting-started"
+    " guide</a> builds it from scratch.</p>"
+    "<h2 id=optimization>Optimization</h2>"
+    "<p>The first runs on AWS showed each hour's task bound to one of the"
+    " worker's four cores, with the Parquet write its largest stage. <a href='"
+    + GH
+    + "/mojo-census/pull/4' rel=noopener>mojo-census #4</a> streams each hour"
+    " through gunzip and parsing as it downloads and writes the files on the"
+    " workers (<a href='"
+    + GH
+    + "/mojo-census/pull/4#six-hours-local-server' rel=noopener>six hours"
+    " locally, 10.3 s to 4.5 s</a>). In the libraries, <a href='"
+    + GH
+    + "/parquet.mojo/pull/59' rel=noopener>parquet #59</a> streams row groups"
+    " out, splits string columns into pages by their size and encodes pages on"
+    " threads (<a href='"
+    + GH
+    + "/parquet.mojo/pull/59#measurements-apple-m4-mojo-120' rel=noopener>a"
+    " 50,000-row batch, 198 ms to 81 ms and 828 MB to 463 MB</a>); <a href='"
+    + GH
+    + "/iceberg.mojo/pull/71' rel=noopener>iceberg #71</a> writes a batch"
+    " without copying it and <a href='"
+    + GH
+    + "/iceberg.mojo/pull/72' rel=noopener>#72</a> writes through the streaming"
+    " writer on every core (<a href='"
+    + GH
+    + "/iceberg.mojo/pull/71#measurements-apple-m4-mojo-120' rel=noopener>an"
+    " hour of GH Archive, 850 ms to 375 ms and 1.4 GB to 0.5 GB at peak</a>);"
+    " <a href='"
+    + GH
+    + "/deflate.mojo/pull/10' rel=noopener>deflate #10</a> and <a href='"
+    + GH
+    + "/deflate.mojo/pull/12' rel=noopener>#12</a> add streaming inflate and a"
+    " faster decode loop (<a href='"
+    + GH
+    + "/deflate.mojo/pull/12#numbers-apple-m4' rel=noopener>gunzip of an hour,"
+    " 553 ms to 336 ms</a>); and <a href='"
+    + GH
+    + "/iceberg.mojo/pull/70' rel=noopener>iceberg #70</a> with <a href='"
+    + GH
+    + "/orca.mojo/pull/114' rel=noopener>orca #114</a> let workers hand their"
+    " data files to the step to commit. On the c7g.xlarge workers, at about"
+    " 85,000 events an hour, the median hour went from 1,094 ms to 680 ms and"
+    " its write from 570 ms to 256 ms (<a href='"
+    + ORCA_UI
+    + "/runs/36' rel=noopener>run 36</a> before, <a href='"
+    + ORCA_UI
+    + "/runs/48' rel=noopener>run 48</a> after).</p></div>"
+)
+
+
+def how(req: Request) raises -> Response:
+    return _page("How it works", String(HOW), "how")
+
+
 def main() raises:
     var r = Router()
     r.get("/", index)
     r.get("/versions", versions)
+    r.get("/how", how)
     r.get("/repos/:owner/:name", repo_page)
     r.get("/api/repos", index_json)
     r.get("/api/versions", versions_json)
