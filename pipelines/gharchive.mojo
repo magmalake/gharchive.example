@@ -1,7 +1,7 @@
 """The gharchive pipeline: each day of GH Archive into `gharchive.events`.
 
 Daily from 2023-01-01, at 03:00 UTC for the day before. A day's step fans
-its hours out as dista tasks, at most `GHARCHIVE_PARALLEL` (default 8, one per worker) at a time. A
+its hours out as dista tasks, at most `GHARCHIVE_PARALLEL` (default 16: 4 instances of 4 worker processes) at a time. A
 task streams its hour in on a reader thread while it gunzips and parses
 what has arrived, a window at a time, and writes the Parquet data files
 into the table itself; it sends back only
@@ -84,7 +84,7 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
         ctx, GH_RELEASES, gh_releases_schema(), gh_releases_spec(), props
     )
     ref rt = ctx.runtime[GhTasks]()
-    var window = max(1, Int(getenv("GHARCHIVE_PARALLEL", "8")))
+    var window = max(1, Int(getenv("GHARCHIVE_PARALLEL", "16")))
 
     # Hours an earlier attempt of this step already committed come first in
     # its commit order; recognise them without fetching anything. Each

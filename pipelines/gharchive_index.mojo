@@ -117,7 +117,7 @@ def index_day(mut ctx: Ctx, d: Day) raises -> Int64:
         ctx, GH_RELEASES, gh_releases_schema(), gh_releases_spec(), props
     )
     ref rt = ctx.runtime[IndexTasks]()
-    var window = max(1, Int(getenv("GHARCHIVE_PARALLEL", "8")))
+    var window = max(1, Int(getenv("GHARCHIVE_PARALLEL", "16")))
     var n = 24
     var d_cand = committed_hours(ctx, cand_t, n)
     var d_hour = committed_hours(ctx, hour_t, n)
