@@ -13,9 +13,11 @@ build-console = "mkdir -p build && mojo build -I src bin/console.mojo -o build/c
 build-gharchive = "mkdir -p build && mojo build -I src pipelines/gharchive.mojo -o build/gharchive"
 build-mojo-repos = "mkdir -p build && mojo build -I src pipelines/mojo_repos.mojo -o build/mojo_repos"
 build-mojo-history = "mkdir -p build && mojo build -I src pipelines/mojo_history.mojo -o build/mojo_history"
-build-pipelines = { depends-on = ["build-gharchive", "build-mojo-repos", "build-mojo-history"] }
+build-mojo-activity = "mkdir -p build && mojo build -I src pipelines/mojo_activity.mojo -o build/mojo_activity"
+build-mojo-stats = "mkdir -p build && mojo build -I src pipelines/mojo_stats.mojo -o build/mojo_stats"
+build-pipelines = { depends-on = ["build-gharchive", "build-mojo-repos", "build-mojo-history", "build-mojo-activity", "build-mojo-stats"] }
 build = { depends-on = ["build-orca", "build-pipelines", "build-console"] }
-test = "mojo run -I src tests/test_versions.mojo && mojo run -I src tests/test_history.mojo && mojo run -I src tests/test_datafiles.mojo && mojo run -I src tests/test_jscan.mojo && mojo run -I src tests/test_events.mojo && mojo run -I src tests/test_search.mojo"
+test = "mojo run -I src tests/test_versions.mojo && mojo run -I src tests/test_history.mojo && mojo run -I src tests/test_datafiles.mojo && mojo run -I src tests/test_jscan.mojo && mojo run -I src tests/test_events.mojo && mojo run -I src tests/test_search.mojo && mojo run -I src tests/test_activity.mojo && mojo run -I src tests/test_stats.mojo"
 
 [dependencies]
 mojo-compiler = "==1.2.0"

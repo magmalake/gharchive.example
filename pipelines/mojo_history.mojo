@@ -7,9 +7,17 @@ its keys: it sends every repository to a dista task (`read_history`: a
 bare clone and one `git log`), then appends what comes back to
 `mojo.commits` and `mojo.migrations` as one snapshot each.
 
-A repository already in `mojo.commits` is skipped, so a rerun doesn't
-duplicate rows. `MOJO_HISTORY_MAX_KB` skips repositories GitHub says are
-bigger than that (for local runs; modular/modular is gigabytes).
+Each repository's git tags go to `mojo.tags`, with the tooling and Mojo
+version at the tagged commit when it is on the first-parent history.
+
+A rerun doesn't duplicate rows: a repository already in `mojo.commits` gets
+no commits or migrations again, and one already in `mojo.tags` no tags. A
+repository with a history but no tags yet (read before tags were) is
+cloned without file contents and only its tags read (`read_tags`), so
+`orca backfill --rerun mojo_history @all` fills `mojo.tags` for every
+repository and leaves the other tables as they are.
+`MOJO_HISTORY_MAX_KB` skips repositories GitHub says are bigger than that
+(for local runs; modular/modular is gigabytes).
 """
 
 from std.os import getenv, setenv
@@ -22,20 +30,24 @@ from orca.keyed import Keyed
 from orca.tables import append, ensure_table, scan, table
 
 from cols import col, i64_at, str_at
-from history import History, read_history
+from history import History, TagRow, join_tags, read_history, read_tags
 from lake import (
     COMMITS,
     MIGRATIONS,
     REPOS,
+    TAGS,
     commits_schema,
     migrations_schema,
     str_or_null,
+    tags_schema,
+    ts_or_null,
     ts,
 )
 
 
 comptime ReadHistory = Task[String, History, read_history]
-comptime HistoryTasks = Tasks[ReadHistory]
+comptime ReadTags = Task[String, History, read_tags]
+comptime HistoryTasks = Tasks[ReadHistory, ReadTags]
 
 
 def _sizes(mut ctx: Ctx) raises -> Dict[String, Int64]:
@@ -51,10 +63,38 @@ def _sizes(mut ctx: Ctx) raises -> Dict[String, Int64]:
     return out^
 
 
-def _done(mut ctx: Ctx) raises -> Dict[String, Bool]:
-    """Repositories mojo.commits already has."""
-    var out = Dict[String, Bool]()
+def _commits_of(
+    mut ctx: Ctx, repos: List[String]
+) raises -> Dict[String, Tuple[String, String]]:
+    """sha -> (tooling, Mojo version) of the commits mojo.commits has for
+    `repos`, for the tags of repositories read before tags were."""
+    var out = Dict[String, Tuple[String, String]]()
+    if len(repos) == 0:
+        return out^
+    var want = Dict[String, Bool]()
+    for r in repos:
+        want[r] = True
     var t = table(ctx, COMMITS)
+    if not t.metadata.has_current_snapshot:
+        return out^
+    for b in t.scan().select(["repo", "sha", "tooling", "mojo_version"]).to_batches():
+        var ir = col(b, "repo")
+        var isha = col(b, "sha")
+        var it = col(b, "tooling")
+        var iv = col(b, "mojo_version")
+        for r in range(b.num_rows):
+            if str_at(b.column(ir), r) in want:
+                out[str_at(b.column(isha), r)] = (
+                    str_at(b.column(it), r),
+                    str_at(b.column(iv), r),
+                )
+    return out^
+
+
+def _done(mut ctx: Ctx, dataset: String = COMMITS) raises -> Dict[String, Bool]:
+    """Repositories mojo.commits (or `dataset`) already has."""
+    var out = Dict[String, Bool]()
+    var t = table(ctx, dataset)
     if not t.metadata.has_current_snapshot:
         return out^
     for b in t.scan().select(["repo"]).to_batches():
@@ -66,23 +106,39 @@ def _done(mut ctx: Ctx) raises -> Dict[String, Bool]:
 def histories(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
     var commits_t = ensure_table(ctx, COMMITS, commits_schema())
     var migrations_t = ensure_table(ctx, MIGRATIONS, migrations_schema())
+    var tags_t = ensure_table(ctx, TAGS, tags_schema())
     var sizes = _sizes(ctx)
     var done = _done(ctx)
+    var tagged = _done(ctx, TAGS)
     var max_kb = Int64(Int(getenv("MOJO_HISTORY_MAX_KB", "0")))
     ref rt = ctx.runtime[HistoryTasks]()
     var names = List[String]()
     var refs = List[ObjectRef[History]]()
+    var tags_only = List[String]()
     for i in range(len(keys)):
         var repo = keys.items[i].text
-        if repo in done:
-            ctx.log(String(repo, ": already in mojo.commits, skipped"))
+        if repo in done and repo in tagged:
+            ctx.log(String(repo, ": already in mojo.commits and mojo.tags, skipped"))
             continue
         var kb = sizes.get(repo, Int64(0))
         if max_kb > 0 and kb > max_kb:
             ctx.log(String(repo, ": ", kb, " KB is over MOJO_HISTORY_MAX_KB, skipped"))
             continue
         names.append(repo)
-        refs.append(rt.remote[ReadHistory](repo))
+        if repo in done:
+            tags_only.append(repo)
+            refs.append(rt.remote[ReadTags](repo))
+        else:
+            refs.append(rt.remote[ReadHistory](repo))
+    var known_commits = _commits_of(ctx, tags_only)
+    var ts_ = tags_schema()
+    var t_repo = ColumnBuilder.of(ts_, 1)
+    var t_tag = ColumnBuilder.of(ts_, 2)
+    var t_commit = ColumnBuilder.of(ts_, 3)
+    var t_ann = ColumnBuilder.of(ts_, 4)
+    var t_at = ColumnBuilder.of(ts_, 5)
+    var t_tool = ColumnBuilder.of(ts_, 6)
+    var t_ver = ColumnBuilder.of(ts_, 7)
 
     var cs = commits_schema()
     var ms = migrations_schema()
@@ -112,12 +168,29 @@ def histories(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
                 first_error = String(names[i], ": ", h.error)
             failed += 1
             continue
+        var tags = List[TagRow]()
+        for ref t in h.tags.items:
+            tags.append(t.copy())
+        if names[i] in done:
+            join_tags(tags, known_commits)
+        if names[i] not in tagged:
+            for ref t in tags:
+                t_repo.add(Datum.string_(t.repo))
+                t_tag.add(Datum.string_(t.tag))
+                t_commit.add(Datum.string_(t.commit))
+                t_ann.add(Datum.bool_(t.annotated))
+                t_at.add(ts_or_null(t.tagged_at))
+                t_tool.add(str_or_null(t.tooling))
+                t_ver.add(str_or_null(t.mojo_version))
+        if names[i] in done:
+            ctx.log(String(names[i], ": ", len(tags), " tags (history already read)"))
+            continue
         var last_lines = Int64(0)
         if len(h.commits) > 0:
             last_lines = h.commits.items[len(h.commits) - 1].mojo_lines
         ctx.log(String(
             names[i], ": ", len(h.commits), " commits, ", len(h.migrations),
-            " migrations, ", last_lines, " lines of Mojo now",
+            " migrations, ", len(tags), " tags, ", last_lines, " lines of Mojo now",
         ))
         for ref c in h.commits.items:
             c_repo.add(Datum.string_(c.repo))
@@ -141,7 +214,13 @@ def histories(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
         _ = append(ctx, commits_t, [batch_of([c_repo^, c_sha^, c_at^, c_seq^, c_lines^, c_files^, c_tool^, c_ver^, c_src^])])
     if len(m_repo) > 0:
         _ = append(ctx, migrations_t, [batch_of([m_repo^, m_sha^, m_at^, m_kind^, m_from^, m_to^])])
-    ctx.log(String(len(refs), " repositories read (", failed, " failed), ", n, " commits"))
+    var n_tags = len(t_repo)
+    if n_tags > 0:
+        _ = append(ctx, tags_t, [batch_of([t_repo^, t_tag^, t_commit^, t_ann^, t_at^, t_tool^, t_ver^])])
+    ctx.log(String(
+        len(refs), " repositories read (", len(tags_only), " for tags only, ",
+        failed, " failed), ", n, " commits, ", n_tags, " tags",
+    ))
     if failed > 0 and failed == len(refs):
         raise Error(
             "every repository in this run failed (", failed, "); the first, ",
@@ -158,7 +237,7 @@ comptime Histories = Step[
     Gather,
     retries=1,
     reads=[REPOS],
-    writes=[COMMITS, MIGRATIONS],
+    writes=[COMMITS, MIGRATIONS, TAGS],
 ]
 comptime MojoHistory = Pipeline[
     "mojo_history",

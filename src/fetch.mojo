@@ -234,6 +234,20 @@ struct Reply(Movable):
     var body: String
     var remaining: Int
     """`X-RateLimit-Remaining`, or -1 when the reply didn't say."""
+    var retry_after: Int
+    """`Retry-After` in seconds, or -1."""
+    var reset: Int
+    """`X-RateLimit-Reset` (epoch seconds), or -1."""
+
+
+def _header_int(resp: Response, name: String) -> Int:
+    var v = resp.headers.get(name)
+    if v:
+        try:
+            return Int(v)
+        except:
+            pass
+    return -1
 
 
 def github(path: String) raises -> Reply:
@@ -247,14 +261,13 @@ def github(path: String) raises -> Reply:
     if token:
         req.headers.set("Authorization", String("Bearer ", token))
     var resp = c.send(req)
-    var rem = resp.headers.get("x-ratelimit-remaining")
-    var remaining = -1
-    if rem:
-        try:
-            remaining = Int(rem)
-        except:
-            pass
-    return Reply(resp.status, resp.text(), remaining)
+    return Reply(
+        resp.status,
+        resp.text(),
+        _header_int(resp, "x-ratelimit-remaining"),
+        _header_int(resp, "retry-after"),
+        _header_int(resp, "x-ratelimit-reset"),
+    )
 
 
 def raw_file(repo: String, branch: String, file: String) raises -> String:

@@ -16,7 +16,8 @@ run checks those first, whatever day it is for.
 
 from std.os import getenv, setenv
 
-from iceberg.batch import ColumnBuilder, batch_of
+from iceberg.batch import ColumnBuilder, NestedBuilder, batch_of, batch_of_columns
+from iceberg.nested import ColumnTree
 from iceberg.values import Datum
 from orca import Ctx, Daily, Day, Mapped, Pipeline, Step, orca_main
 from orca.civil import now
@@ -31,6 +32,7 @@ from lake import (
     EVENTS,
     REPOS,
     checked_schema,
+    json_strings,
     repos_schema,
     str_or_null,
     ts,
@@ -170,6 +172,7 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
     var c_size = ColumnBuilder.of(rs, 10)
     var c_lang = ColumnBuilder.of(rs, 11)
     var c_fork = ColumnBuilder.of(rs, 12)
+    var c_topics = NestedBuilder.of(rs, 13)
     var k_repo = ColumnBuilder.of(cs, 1)
     var k_at = ColumnBuilder.of(cs, 2)
     var k_out = ColumnBuilder.of(cs, 3)
@@ -216,6 +219,7 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
                     c_size.add(Datum.long_(v.info.size_kb))
                     c_lang.add(str_or_null(v.info.language))
                     c_fork.add(Datum.bool_(v.info.fork))
+                    c_topics.add(json_strings(v.info.topics))
                     added += 1
                 if v.remaining == 0:
                     ctx.log("GitHub rate limit now 0; the rest wait for a later run")
@@ -230,7 +234,11 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
         k_first.add(ts(c.first_seen))
         k_sha.add(str_or_null(c.sha))
     if added > 0:
-        var id = append(ctx, repos_t, [batch_of([c_repo^, c_created^, c_first^, c_found^, c_stars^, c_forks^, c_license^, c_branch^, c_desc^, c_size^, c_lang^, c_fork^])])
+        var trees = List[ColumnTree]()
+        for ref c in [c_repo^, c_created^, c_first^, c_found^, c_stars^, c_forks^, c_license^, c_branch^, c_desc^, c_size^, c_lang^, c_fork^]:
+            trees.append(c.build_tree())
+        trees.append(c_topics.build())
+        var id = append(ctx, repos_t, [batch_of_columns(trees^)])
         ctx.log(String(added, " Mojo repositories added, snapshot ", id))
     if len(k_repo) > 0:
         _ = append(ctx, checked_t, [batch_of([k_repo^, k_at^, k_out^, k_sig^, k_how^, k_first^, k_sha^])])

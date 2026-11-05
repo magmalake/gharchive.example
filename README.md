@@ -2,7 +2,7 @@
 
 A lake of GitHub activity built on [magmalake](https://magmalake.org), and
 a console that shows how Mojo libraries have grown. Everything is Mojo, in
-one pixi project: three [orca](https://github.com/magmalake/orca.mojo)
+one pixi project: five [orca](https://github.com/magmalake/orca.mojo)
 pipelines write Iceberg tables, the project's own `orca` schedules them,
 and a [flare](https://github.com/magmalake/flare_mlake) app reads the
 tables.
@@ -13,12 +13,18 @@ with every run, log and table, at <https://orca.mlake.dev>. The
 ways, with an agent from [PROMPT.md](PROMPT.md) or step by step.
 
 ```
-GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ mojo.repos ─┐
- (daily, 03:00 UTC,         (by day)         (sensor)      mojo.checked │
-  a dista task per hour)                                               │
-                            mojo.commits ◀──mojo_history──────────────┘
-                            mojo.migrations  (keyed by repository, 50 a run,
-                                              a dista task per clone)
+GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ mojo.repos ─┬──────────┐
+ (daily, 03:00 UTC,         (by day)    │    (sensor)      mojo.checked │          │
+  a dista task per hour)                │                               │          │
+                                        └──mojo_activity──▶ mojo.activity          │
+                                           (sensor on both; mojo.releases          │
+                                            a dista task    mojo.activity_repos    │
+                                            per day read)        (by month)        │
+                            mojo.commits ◀──mojo_history───────────────────────────┤
+                            mojo.migrations  (keyed by repository, 50 a run,       │
+                            mojo.tags         a dista task per clone)              │
+                            mojo.repo_stats ◀──mojo_stats──────────────────────────┘
+                              (by month)       (Mondays 06:00 UTC, GitHub API)
                                    │
                                    ▼
                           bin/console (flare)
@@ -30,7 +36,9 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   partitioned by day. A day's hours are dista tasks: each streams its
   hour in on a reader thread while it gunzips and parses what has
   arrived, a window at a time, and writes the Parquet files on the worker; the step commits each hour's files as one append,
-  in order, and a retry skips the hours already committed.
+  in order, and a retry skips the hours already committed. A new run of a
+  day that has rows (`orca backfill --rerun`) replaces them: its first
+  hour's commit removes the day's earlier files.
 - **`pipelines/mojo_repos.mojo`**: a sensor on `gharchive.events`. For each
   day it finds candidates (repository names, the `language` of repository
   objects that pull-request and fork payloads embed, commit messages
@@ -38,7 +46,7 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   GitHub (`language: Mojo`, a `pixi.toml` or `mojoproject.toml` naming a
   Mojo package, or the pushed commit's files). Mojo repositories go into
   `mojo.repos` (created, first seen, how found, stars, forks, license,
-  default branch, description, size); every answer goes into
+  default branch, description, size, topics); every answer goes into
   `mojo.checked`, so a repository is asked about once. Forks are left out.
 - **`pipelines/mojo_history.mojo`**: keyed by repository (the `repo`
   column of `mojo.repos`, `owner/name`), 50 a run, and a sensor on
@@ -46,14 +54,43 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   repositories it adds. Each repository is cloned in a
   dista task and its first-parent history read into `mojo.commits` (lines
   and files of Mojo at each commit, the tooling, none → magic → pixi, and
-  the Mojo version the lock file or manifest names) and `mojo.migrations`
-  (each change of tooling or Mojo version).
+  the Mojo version the lock file or manifest names), `mojo.migrations`
+  (each change of tooling or Mojo version) and `mojo.tags` (each git tag:
+  the commit, annotated or not, its date, and the tooling and Mojo version
+  at that commit). A repository already in a table isn't written to it
+  again; one with a history and no tags is cloned without file contents
+  for its tags only, so `orca backfill --rerun mojo_history @all` fills
+  `mojo.tags` for repositories read before tags were.
+- **`pipelines/mojo_activity.mojo`**: daily, a sensor on `gharchive.events`
+  and `mojo.repos`, no API calls. For each day, every repository in
+  `mojo.repos`: `mojo.activity` (events, stars as WatchEvents, forks,
+  published releases, issues and pull requests opened, pushes, distinct
+  actors) and `mojo.releases` (tag, name, published, prerelease), both by
+  month. A repository not yet in `mojo.activity_repos` is caught up: the
+  run also reads every other day the events table has (from the day the
+  repository was created) for it, a dista task a day, so a repository
+  found today has its whole history. A run replaces the rows of the
+  (repository, day) pairs it computed and keeps the rest, one run at a
+  time, so reruns don't duplicate rows.
+- **`pipelines/mojo_stats.mojo`**: Mondays at 06:00 UTC (daily partitions,
+  one a week), one `GET /repos/{owner}/{repo}` per repository in
+  `mojo.repos` into `mojo.repo_stats` (stars, forks, open issues, watchers,
+  topics, archived, last push, homepage, license, description, size), by
+  month of `as_of`, so stars become a time series. A repository that is
+  gone, blocked or renamed is a row with that `state`; a rate limit is
+  waited out by `Retry-After` / `X-RateLimit-Reset`. A rerun of a day
+  replaces that day's rows.
 - **`bin/console.mojo`**: the libraries by size and age (`/`), the Mojo
   versions they moved to over time (`/versions`), and a page per
   repository (`/repos/<owner>/<name>`), each also as JSON under `/api/`.
 - **`src/`**: the tables (`lake.mojo`), the JSON scanner, HTTP, detection, git history, and `versions.mojo`, which orders Mojo versions
   across Modular's renumbering (24.x, 25.x, 0.25.x, 0.26.x, 1.x);
-  `tests/test_versions.mojo` tests that order.
+  `tests/test_versions.mojo` tests that order. `activity.mojo` counts a
+  day's events, `stats.mojo` reads GitHub's repository JSON, and
+  `replace.mojo` replaces a table's rows by partition.
+- **`tools/drop_run.mojo`**: removes the rows one orca run appended to one
+  partition (how 2026-10-13, loaded twice before gharchive replaced a
+  rerun's day, was repaired).
 
 [GAPS.md](GAPS.md) lists what the magmalake skills and libraries were missing
 while this was built.
@@ -67,8 +104,8 @@ zstd-mojo 0.1.5 they find their shared libraries without `CONDA_PREFIX`),
 though Postgres and `git` come from the pixi environment.
 
 ```sh
-pixi run build      # build/orca, build/{gharchive,mojo_repos,mojo_history}, build/console
-pixi run test       # version ordering and history parsing
+pixi run build      # build/orca, build/{gharchive,mojo_repos,mojo_history,mojo_activity,mojo_stats}, build/console
+pixi run test       # version ordering, history and tag parsing, events, activity, GitHub stats
 ```
 
 ### The pipelines on their own
@@ -81,6 +118,8 @@ export ORCA_WAREHOUSE=$PWD/build/warehouse
 GHARCHIVE_HOURS=15,17 pixi run ./build/gharchive run --partitions 2024-06-12
 pixi run ./build/mojo_repos run --partitions 2024-06-12
 MOJO_HISTORY_MAX_KB=100000 pixi run ./build/mojo_history run --partitions @all
+pixi run ./build/mojo_activity run --partitions 2024-06-12
+pixi run ./build/mojo_stats run --partitions 2024-06-12   # GITHUB_TOKEN helps
 PORT=8080 pixi run ./build/console      # http://127.0.0.1:8080
 ```
 
@@ -104,8 +143,8 @@ snapshots made after it is registered), then backfill one day:
 ```sh
 pixi shell
 . scripts/env.sh
-for p in gharchive mojo_repos mojo_history; do ./build/orca locate build/$p --root .; done
-./build/orca register ./build/gharchive ./build/mojo_repos ./build/mojo_history
+for p in gharchive mojo_repos mojo_history mojo_activity mojo_stats; do ./build/orca locate build/$p --root .; done
+./build/orca register ./build/gharchive ./build/mojo_repos ./build/mojo_history ./build/mojo_activity ./build/mojo_stats
 ./build/orca scheduler &                 # fires, senses, starts runs
 ./build/orca ui &                        # http://127.0.0.1:8270
 ./build/orca backfill gharchive 2024-06-12
@@ -160,6 +199,6 @@ Not done in this local run:
 - Backfill one month (`./build/orca aws ...` then `orca backfill gharchive
   2025-01-01..2025-01-31`) to see the cost, then the rest from 2023-01-01.
   Note that recent hours of GH Archive carry much smaller payloads.
-- Re-running a day appends its events again (no overwrite of a day's
-  partition yet), and `mojo.repos` stars and forks are as of the day a
-  repository was found; refreshing them needs an overwrite.
+- `mojo.repos` stars and forks are as of the day a repository was found;
+  `mojo.repo_stats` has them week by week, and `mojo.activity` day by day
+  from GH Archive.

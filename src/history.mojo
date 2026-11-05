@@ -4,7 +4,10 @@ commit, and the commits where the tooling or the version changed.
 `read_history` clones the repository (bare, into `MOJO_HISTORY_WORKDIR`,
 default `$TMPDIR/mojo_history`), walks its first-parent history once with
 `git log --numstat --summary`, and reads a manifest or lock file only at the
-commits that touch one. It needs `git` on the PATH.
+commits that touch one. It also reads the clone's tags (`git
+for-each-ref refs/tags`). `read_tags` reads only the tags, from a clone
+without file contents, for a repository whose history mojo.commits already
+has. It needs `git` on the PATH.
 """
 
 from std.os import getenv
@@ -41,12 +44,97 @@ struct MigrationRow(Copyable, Movable):
 
 
 @fieldwise_init
+struct TagRow(Copyable, Movable):
+    var repo: String
+    var tag: String
+    """The name under `refs/tags/`."""
+    var commit: String
+    """What the tag points at, peeled once for an annotated tag."""
+    var annotated: Bool
+    var tagged_at: Int64
+    """The tagger's date (annotated) or the commit's (lightweight), in
+    microseconds; 0 if git had none."""
+    var tooling: String
+    var mojo_version: String
+    """At `commit`, when it is on the first-parent history; else empty."""
+
+
+@fieldwise_init
 struct History(Copyable, Movable):
     var repo: String
     var error: String
     """Empty when the history was read."""
     var commits: Seq[CommitRow]
     var migrations: Seq[MigrationRow]
+    var tags: Seq[TagRow]
+
+    @staticmethod
+    def empty(repo: String) -> Self:
+        return Self(
+            repo, String(), Seq[CommitRow](), Seq[MigrationRow](), Seq[TagRow]()
+        )
+
+
+comptime TAG_FORMAT = (
+    "%(refname)%09%(objecttype)%09%(objectname)%09%(*objectname)%09%(creatordate:unix)"
+)
+"""`git for-each-ref --format`: tab-separated, as git refuses tabs in ref
+names."""
+
+
+def parse_tags(repo: String, output: String) -> List[TagRow]:
+    """`git for-each-ref --format=TAG_FORMAT refs/tags` output as rows, by
+    name. Lines that don't have the five fields are skipped."""
+    var rows = List[TagRow]()
+    for line in output.split("\n"):
+        var f = line.split("\t")
+        if len(f) != 5:
+            continue
+        var name = String(f[0])
+        if not name.startswith("refs/tags/"):
+            continue
+        var tag = String(name[byte=10:])
+        if tag.byte_length() == 0:
+            continue
+        var annotated = String(f[1]) == "tag"
+        var target = String(f[3]) if annotated and f[3].byte_length() > 0 else String(f[2])
+        var at = Int64(0)
+        try:
+            at = Int64(Int(String(f[4]).strip())) * 1_000_000
+        except:
+            at = 0
+        rows.append(TagRow(repo, tag, target, annotated, at, String(), String()))
+    for i in range(1, len(rows)):
+        var j = i
+        while j > 0 and rows[j - 1].tag > rows[j].tag:
+            rows.swap_elements(j - 1, j)
+            j -= 1
+    return rows^
+
+
+def join_tags(mut tags: List[TagRow], commits: Dict[String, Tuple[String, String]]):
+    """Fills each tag's tooling and Mojo version from the commit it points
+    at (sha -> (tooling, version))."""
+    for ref t in tags:
+        if t.commit in commits:
+            var v = commits.get(t.commit, (String(), String()))
+            t.tooling = v[0]
+            t.mojo_version = v[1]
+
+
+def _read_tags(repo: String, dir: String, mut out: History) raises:
+    var r = _sh(String(
+        "git -C '", dir, "' for-each-ref --format='", TAG_FORMAT, "' refs/tags",
+    ))
+    if r[0] != 0:
+        raise Error("git for-each-ref failed: ", r[1].strip())
+    var tags = parse_tags(repo, r[1])
+    var by_sha = Dict[String, Tuple[String, String]]()
+    for ref c in out.commits.items:
+        by_sha[c.sha] = (c.tooling, c.mojo_version)
+    join_tags(tags, by_sha)
+    for ref t in tags:
+        out.tags.append(t.copy())
 
 
 def safe_repo(repo: String) -> Bool:
@@ -236,7 +324,7 @@ def read_history(repo: String) raises -> History:
     """Clones `repo` from GitHub and reads its history. Errors (a repository
     gone, a clone that failed, history that doesn't parse) come back in
     `error`, so one bad repository doesn't fail the rest of its run."""
-    var out = History(repo, String(), Seq[CommitRow](), Seq[MigrationRow]())
+    var out = History.empty(repo)
     try:
         _read_history(repo, out)
     except e:
@@ -245,9 +333,36 @@ def read_history(repo: String) raises -> History:
                 _ = _sh(String("rm -rf '", _clone_dir(repo), "'"))
             except:
                 pass
-        out = History(
-            repo, String("reading its history: ", e), Seq[CommitRow](), Seq[MigrationRow]()
-        )
+        out = History.empty(repo)
+        out.error = String("reading its history: ", e)
+    return out^
+
+
+def read_tags(repo: String) raises -> History:
+    """Only `repo`'s tags (no commits), from a bare clone without file
+    contents (`--filter=blob:none`); errors come back in `error`."""
+    var out = History.empty(repo)
+    if not safe_repo(repo):
+        out.error = String("not a repository name: ", repo)
+        return out^
+    var dir = _clone_dir(repo)
+    try:
+        _ = _sh(String("mkdir -p '", _workdir(), "' && rm -rf '", dir, "'"))
+        var clone = _sh(String(
+            "GIT_TERMINAL_PROMPT=0 git clone --quiet --bare --filter=blob:none",
+            " https://github.com/", repo, ".git '", dir, "' 2>&1",
+        ))
+        if clone[0] != 0:
+            out.error = String("git clone failed: ", clone[1].strip())
+        else:
+            _read_tags(repo, dir, out)
+    except e:
+        out = History.empty(repo)
+        out.error = String("reading its tags: ", e)
+    try:
+        _ = _sh(String("rm -rf '", dir, "'"))
+    except:
+        pass
     return out^
 
 
@@ -288,6 +403,10 @@ def _read_history(repo: String, mut out: History) raises:
     else:
         try:
             _parse_log(repo, dir, log[1], out)
+            try:
+                _read_tags(repo, dir, out)
+            except:
+                pass  # the history stands without its tags
         except e:
             out.error = String("reading its git log: ", e)
     _ = _sh(String("rm -rf '", dir, "'"))

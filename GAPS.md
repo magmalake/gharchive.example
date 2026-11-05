@@ -481,6 +481,123 @@ an hour or needs reading library source), **low** (friction).
   `wait(n)`; threads-mojo: a typed `spawn` over an owned value, as
   `TypedPool` does for pools.
 
+## 26. A rerun of an appending step appends again; orca.tables can't replace a partition (high)
+
+- **Tried:** `orca backfill --rerun gharchive 2026-10-13` (on AWS, to
+  reload a day), and, for the new pipelines, a way to make a rerun of a
+  day or a key leave one copy of its rows.
+- **Happened:** `gharchive.events` had 2026-10-13 twice: runs 48 and 133
+  each appended 2,029,814 rows. `load_day` skips the hours *its own run*
+  committed (`find_commit` matches this run's commits only), so a new run
+  appends every hour again. The orca skill and DESIGN.md say "a partition
+  that's done is not protected ... its steps append again", but nothing
+  in `orca.tables` replaces a partition: there is `append`,
+  `append_files` and `commit(FileChanges)`, and finding a partition's
+  files is up to the caller. iceberg-mojo's `Table.overwrite` and
+  `dynamic_partition_overwrite` exist, but bypass orca's commit
+  bookkeeping and fencing.
+- **Did instead:** `tools/drop_run.mojo` removed run 133's 48 files (one
+  `delete` snapshot, with `orca.partitions` in its summary for the
+  sensors). `src/replace.mojo`: `partition_files` (plan the current
+  snapshot, keep the files whose first partition value is wanted) and
+  `replace_files` (one `commit(ctx, t, "overwrite", FileChanges)` that
+  removes them and adds the new rows, `append` when nothing is removed,
+  `find_commit` first). gharchive's first hour of a new run is now an
+  overwrite of the day's files; mojo_activity, mojo_stats read the month
+  partitions they touch, keep the rows they didn't recompute and replace
+  the rest. mojo_history's writes are idempotent per repository instead
+  (it skips what each table already has).
+- **Fix:** orca: `replace_partitions(ctx, table, batches_or_files)` (an
+  overwrite of exactly the partitions the new rows land in, through
+  orca's commit), and a `Step[..., replace=True]` that makes a new run's
+  first commit to a table replace the run's partitions; until then
+  `orca backfill --rerun` should warn for a step that appends.
+  [magmalake/orca.mojo issue](https://github.com/magmalake/orca.mojo/issues/120).
+
+## 27. Snapshot expiry is quadratic, and commits slow down with every metadata file (medium)
+
+- **Tried:** to expire `gharchive.events`' old snapshots (888 of them, a
+  937 KB `metadata.json` rewritten on every commit), or to have iceberg-mojo
+  delete old metadata files with `write.metadata.delete-after-commit.enabled`
+  and `write.metadata.previous-versions-max`.
+- **Happened:** iceberg-mojo 0.9.1 has `Table.expire_snapshots` and
+  `maintain.expire_snapshots`, but they read every retained snapshot's
+  manifest list and then every manifest it lists, with no cache, so a
+  table with one manifest per commit costs snapshots x manifests reads
+  (~600,000 S3 GETs here), and membership is a linear scan of a `List`.
+  The two metadata properties aren't read at all ("a separate policy",
+  says `maintain.mojo`), and `commit_metadata` lists the whole metadata
+  directory to find the latest file (889 objects, a page of
+  `ListObjectsV2` per 1,000) on every commit.
+- **Did instead:** nothing: no expiry is wired in yet.
+- **Fix:** iceberg-mojo: cache manifests by path in `_referenced_by` (a
+  manifest is read once however many snapshots list it) and keep the keep
+  set in a `Dict`; honour `write.metadata.delete-after-commit.enabled`
+  with `previous-versions-max`; use `version-hint.text` before listing.
+  orca: an `expire_snapshots(ctx, table, older_than_days)` step helper
+  that refuses snapshots a live run has pinned.
+
+## 28. Removing files reads every manifest, even of other partitions (low)
+
+- **Tried:** gharchive's overwrite of one day in a table of 888 manifests.
+- **Happened:** `prepare_commit`'s `_carry_or_rewrite` opens every
+  carried manifest to look for the removed paths, without its partition
+  summary, so replacing one day reads all of them (888 small GETs).
+- **Did instead:** accepted it: a rerun of a day is rare.
+- **Fix:** iceberg-mojo: skip a manifest whose partition summaries can't
+  hold any removed file's partition (the removed files' partitions are
+  known from the plan that found them).
+
+## 29. Two writers replacing the same partition: orca's commit retry replays a stale overwrite (medium)
+
+- **Tried:** a second pipeline (keyed on `mojo.repos`) to fill the history
+  of newly found repositories into `mojo.activity`, beside the daily one.
+- **Happened:** a replace reads the partition's files, then commits
+  `FileChanges(removed=...)`. When another writer commits in between,
+  `orca.tables.commit` reloads and retries with the same `FileChanges`;
+  `prepare_commit` raises only when *none* of the removed files is
+  current, so a partly stale overwrite commits and both writers' rows
+  stay. orca's "one live run per partition" holds within a pipeline only.
+- **Did instead:** one writer: mojo_activity catches new repositories up
+  itself (`mojo.activity_repos` says which are), and runs one run at a
+  time (`max_runs=1`).
+- **Fix:** iceberg-mojo: `prepare_commit` refuses (`validate`) a removal
+  of files that aren't all current, as Java's `validateNoConflictingData`
+  does; orca: a commit retry that rebuilds its `FileChanges` through a
+  callback, or that fails the attempt so the step recomputes.
+
+## 30. A sensor's snapshot that arrives during a live run of its partition is dropped (medium)
+
+- **Tried:** mojo_activity as a sensor on `mojo.repos`, so the snapshot
+  mojo_repos commits for a day reruns that day's activity with the new
+  repositories.
+- **Happened:** gharchive's commit starts mojo_repos and mojo_activity for
+  the day at the same time; when mojo_repos commits, mojo_activity's run
+  for that day can still be live, pinned to the `mojo.repos`
+  before it, and "a sensor leaves those keys to it", so the new snapshot
+  starts nothing. The new repositories wait for the next run (the next
+  day, at most).
+- **Did instead:** accepted the delay: any later run catches up every
+  member not in `mojo.activity_repos`.
+- **Fix:** orca: queue the keys again behind a live run when the live run
+  pinned an older snapshot of the sensed dataset than the one that
+  arrived.
+
+## 31. No weekly partitions; list columns take another batch API (low)
+
+- **Tried:** a weekly refresh (`mojo_stats`) and a `topics` list column.
+- **Happened:** orca has `Daily` and `Monthly` only. A `list<string>`
+  column can't go through `ColumnBuilder`/`batch_of`: it takes
+  `NestedBuilder` (one JSON cell per row), `ColumnTree` from
+  `iceberg.nested` (not exported from `iceberg.batch`) and
+  `batch_of_columns`; reading one back means following
+  `batch.arena.nodes[a.children[0]]` by the list's offsets.
+- **Did instead:** `Daily["2026-11-01"]` with `Cron["0 6 * * 1"]` and
+  `fills=Current`; `lake.json_strings` and `cols.strs_at`.
+- **Fix:** orca: `Weekly[start]` (ISO weeks); iceberg-mojo:
+  `ColumnBuilder.add_strings(List[String])` for lists of primitives and a
+  `list_at` reader, and `ColumnTree` exported beside `batch_of_columns`.
+
 ---
 
 ## What the local run did, the orca way (orca 0.3.1)

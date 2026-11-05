@@ -9,6 +9,11 @@ their entries, which the step commits, an hour as one append, in hour
 order. An hour is one snapshot; a retried step finds the hours its earlier
 attempt committed and skips them without downloading again.
 
+A new run of a day that has rows already (`orca backfill --rerun`)
+replaces them: its first hour's commit is an `overwrite` that also removes
+every data file the day's partition had, so a day's rows always come from
+one run.
+
     GHARCHIVE_HOURS=16-17 ./build/gharchive run --partitions 2025-09-15
 
 `GHARCHIVE_HOURS` (`A-B` or `A,B,...`; default all 24) limits the hours, for
@@ -20,9 +25,11 @@ from std.time import perf_counter_ns
 
 from dista import ObjectRef, Task2
 from orca import Cron, Ctx, Daily, Day, Mapped, Pipeline, Step, Tasks, orca_main
+from iceberg.commit import FileChanges
 from orca.tables import (
     append,
     append_files,
+    commit,
     ensure_table,
     find_commit,
     load_dataset,
@@ -31,7 +38,9 @@ from parquet import RecordBatch
 
 from datafiles import DataFiles
 from events import fetch_hour, parse_hours
+from days import day_text, days_of
 from lake import EVENTS, events_schema, events_spec
+from replace import partition_files
 
 
 def hour_task(day: String, hour: Int) raises -> DataFiles:
@@ -62,6 +71,28 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
     if done > 0:
         ctx.log(String(day, ": ", done, " hours already committed"))
 
+    # Rows an earlier run left for this day, which this run's first commit
+    # replaces.
+    var old = List[String]()
+    if done == 0:
+        var dd = days_of(day)
+        var parts = Dict[Int, Bool]()
+        parts[Int(dd)] = True
+        var f = partition_files(
+            table,
+            parts,
+            String(
+                '["and",[">=","created_at","', day, 'T00:00:00Z"],',
+                '["<","created_at","', day_text(dd + 1), 'T00:00:00Z"]]',
+            ),
+        )
+        old = f.paths.copy()
+        if len(old) > 0:
+            ctx.log(String(
+                day, ": replacing ", f.rows, " rows in ", len(old),
+                " files an earlier run committed",
+            ))
+
     var refs = List[ObjectRef[DataFiles]]()
     var next = done
     while next < len(hours) and next - done < window:
@@ -79,7 +110,13 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
         try:
             # An hour with no files still commits a snapshot, which keeps
             # the numbering aligned.
-            id = append_files(ctx, table, got.files)
+            if i == done and len(old) > 0:
+                var change = FileChanges()
+                change.added_data = got.files.files.copy()
+                change.removed = old.copy()
+                id = commit(ctx, table, "overwrite", change^)
+            else:
+                id = append_files(ctx, table, got.files)
         except e:
             raise Error(day, " hour ", hours[i], ": committing: ", e)
         var commit_ms = Int(perf_counter_ns() - t0) // 1_000_000
