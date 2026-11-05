@@ -120,7 +120,11 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
     var found = Dict[String, Candidate]()
     var rows = 0
     while True:
-        var next = reader.next_batch()
+        var next: Optional[RecordBatch]
+        try:
+            next = reader.next_batch()
+        except e:
+            raise Error(String(d), ": reading ", EVENTS, ": ", e)
         if not next:
             break
         var b = next.take()
@@ -185,7 +189,11 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
             ctx.log(String("budget of ", budget, " checks used; ", len(todo) - asked_n, " candidates wait"))
             stopped = True
         if not stopped:
-            var v = verify(c)
+            var v: Verdict
+            try:
+                v = verify(c)
+            except e:
+                raise Error(c.repo, ": checking it on GitHub: ", e)
             asked_n += 1
             if v.outcome == "limited":
                 ctx.log(String("GitHub rate limit reached after ", asked_n - 1, " checks"))

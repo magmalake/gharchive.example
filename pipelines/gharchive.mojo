@@ -31,7 +31,10 @@ from lake import EVENTS, events_schema, events_spec
 
 def hour_task(day: String, hour: Int) raises -> DataFiles:
     """On a worker: the hour, written into the table but not committed."""
-    return fetch_hour(day, hour, load_dataset(EVENTS))
+    try:
+        return fetch_hour(day, hour, load_dataset(EVENTS))
+    except e:
+        raise Error(day, " hour ", hour, ": ", e)
 
 
 comptime Hour = Task2[String, Int, DataFiles, hour_task]
@@ -68,12 +71,15 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
             next += 1
         var t0 = perf_counter_ns()
         var id: Int64
-        if len(got.files) == 0:
-            id = append(ctx, table, List[RecordBatch]())
-        else:
-            var changes = FileChanges()
-            changes.added_data = got.files.copy()
-            id = commit(ctx, table, "append", changes^)
+        try:
+            if len(got.files) == 0:
+                id = append(ctx, table, List[RecordBatch]())
+            else:
+                var changes = FileChanges()
+                changes.added_data = got.files.copy()
+                id = commit(ctx, table, "append", changes^)
+        except e:
+            raise Error(day, " hour ", hours[i], ": committing: ", e)
         var commit_ms = Int(perf_counter_ns() - t0) // 1_000_000
         rows += Int64(got.rows)
         ctx.log(

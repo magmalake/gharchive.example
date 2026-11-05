@@ -259,6 +259,9 @@ def read_history(repo: String) raises -> History:
     if log[0] != 0:
         out.error = String("git log failed: ", log[1].strip())
     else:
-        _parse_log(repo, dir, log[1], out)
+        try:
+            _parse_log(repo, dir, log[1], out)
+        except e:
+            out.error = String("reading its git log: ", e)
     _ = _sh(String("rm -rf '", dir, "'"))
     return out^
