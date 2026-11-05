@@ -10,9 +10,12 @@ or description, `/migrations` the migrations to each Mojo version over time,
 `/how` and `/how/optimizations` how the census is built,
 `/repos/<owner>/<name>` one repo. The data pages have JSON at `/api/...`.
 
-The repos and the overview are computed once and kept (`Cache`): the
-tables' current snapshots are looked at most every five minutes, and
-everything is read again only when one of them moved or the day changed.
+The repos and the overview are computed and kept (`Cache`), and a background
+thread keeps them fresh: every `CONSOLE_REFRESH_SECONDS` (default 1800) it
+looks at the tables' current snapshots and, only when one moved or the UTC day
+changed, builds a new `Cache` beside the old one and swaps it in. Requests
+always read the current one and never wait for a build; until the first build
+finishes they get a "warming up" page (503).
 The per-repo data (commits, migrations, releases, activity) and the
 Migrations page are read and rendered at the same time.
 
@@ -22,6 +25,8 @@ links, on the system font stack (no external fonts or scripts).
 
 from std.memory.alloc import unsafe_alloc
 from std.os import getenv
+from std.memory import ArcPointer
+from std.time import sleep
 
 from flare.http import (
     Handler,
@@ -38,6 +43,7 @@ from flare.http import (
 )
 from flare.net import SocketAddr
 from orca.civil import now
+from threads import OpaquePtr, ThreadHandle
 
 from charts import compact, donut, line_chart
 from jscan import micros_to_iso
@@ -77,6 +83,7 @@ from model import (
 )
 from days import day_text
 from overview import ACTIVE_DAYS, Builder, Overview, bucket_color, bucket_of, family_of, month_of_days, top_gains
+from swap import Swap, check_due, needs_build
 from search import search_score, sort_buckets, url_decode, version_bucket, version_family
 from versions import sort_versions
 
@@ -135,6 +142,7 @@ td.month{font-weight:600;background:var(--surface)}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow)}
 .card svg{display:block;width:100%;height:auto}
 .card p{margin:8px 0 0;font-size:13px}
+.early{margin-top:28px}.early>summary{cursor:pointer;font-weight:600;margin-bottom:14px}
 .tbl+p{margin:10px 2px 0;font-size:13px}
 footer{border-top:1px solid var(--border);background:var(--bg-alt);padding:24px 0;font-size:13px;color:var(--faint)}
 footer .wrap{display:flex;flex-wrap:wrap;gap:8px 24px;align-items:center}
@@ -331,8 +339,11 @@ def _chips(topics: List[String], limit: Int = 6) -> String:
     return h^
 
 
-comptime RECHECK_SECS = 300
-"""How often the tables' current snapshots are looked at."""
+comptime REFRESH_SECS = 1800
+"""How often the tables' current snapshots are looked at, unless
+`CONSOLE_REFRESH_SECONDS` says otherwise."""
+comptime RETRY_SECS = 30
+"""How soon to look again after a failed build or while nothing is built."""
 comptime RISING_SHOWN = 10
 comptime ACTIVE_SHOWN = 10
 
@@ -355,10 +366,9 @@ struct RepoData(Copyable, Movable):
 
 
 struct Cache(Movable):
-    """The repos and the overview, computed once. `refresh` looks at the
-    tables' snapshots at most every `RECHECK_SECS` and reads everything again
-    only when one moved or the day changed (the windows of 30 days and 12
-    months slide with it). The server is one thread, so no lock is needed."""
+    """The repos and the overview, as of one build. A `Cache` is never changed
+    once it is in the `Swap`: the refresher thread builds the next one beside
+    it, so any number of requests can read it without a lock."""
 
     var ready: Bool
     var libs: List[Library]
@@ -393,8 +403,8 @@ struct Cache(Movable):
     var rising_stars: List[Int64]
     var sources: Sources
     var built_day: Int
-    var checked_at: Int64
     var built_at: Int64
+    """When it was built, in seconds since the epoch."""
 
     def __init__(out self):
         self.ready = False
@@ -420,34 +430,7 @@ struct Cache(Movable):
         self.rising_stars = List[Int64]()
         self.sources = Sources()
         self.built_day = 0
-        self.checked_at = 0
         self.built_at = 0
-
-    def refresh(mut self) raises:
-        var t = now()
-        if self.ready and t - self.checked_at < RECHECK_SECS:
-            return
-        var src = Sources()
-        try:
-            src = read_sources()
-        except e:
-            if self.ready:
-                self.checked_at = t  # keep serving what we have
-                return
-            raise e^
-        var today = Int(t // 86400)
-        self.checked_at = t
-        if self.ready and self.built_day == today and src.same_as(self.sources):
-            return
-        read_days(src)
-        try:
-            self._build(today, src^)
-            self.built_at = t
-        except e:
-            if not self.ready:
-                raise e^
-            # Keep serving what we have; the next check tries again.
-            self.sources = Sources()
 
     def _build(mut self, today: Int, var src: Sources) raises:
         var b = Builder(today)
@@ -691,9 +674,8 @@ def _filter_chips(q: ListQuery) -> String:
     return h^
 
 
-def repos_page(req: Request, mut c: Cache) raises -> Response:
+def repos_page(req: Request, c: Cache) raises -> Response:
     try:
-        c.refresh()
         var q = _list_query(req)
         var idx = select_repos(q, c.lines, c.files, c.stars, c.buckets, c.active, c.families, c.news, c.commits30)
         var h = String(
@@ -835,7 +817,17 @@ def _as_of(ms: Int64) -> String:
     return String(iso[byte=:10], " ", iso[byte=11:16], " UTC")
 
 
-def overview(req: Request, mut c: Cache) raises -> Response:
+def _span(secs: Int) -> String:
+    """`45 s`, `12 min`, `3 h 5 min`."""
+    if secs < 90:
+        return String(max(secs, 0), " s")
+    var mins = (secs + 30) // 60
+    if mins < 120:
+        return String(mins, " min")
+    return String(mins // 60, " h ", mins % 60, " min") if mins % 60 > 0 else String(mins // 60, " h")
+
+
+def overview(req: Request, c: Cache) raises -> Response:
     if _raw_query(req).byte_length() > 0 and (
         req.query_param("sort").byte_length() > 0
         or req.query_param("dir").byte_length() > 0
@@ -846,7 +838,6 @@ def overview(req: Request, mut c: Cache) raises -> Response:
         # The Repos table used to be the home page: keep its links working.
         return redirect(String("/repos?", _raw_query(req)), 301)
     try:
-        c.refresh()
         ref ov = c.ov
         var h = String(
             "<h1>Mojo census</h1><p class=lead>How the Mojo language is being used on GitHub:",
@@ -1002,6 +993,7 @@ def overview(req: Request, mut c: Cache) raises -> Response:
         h.write(
             "<p class=asof>Data as of ", _as_of(c.sources.as_of_ms), " (the latest snapshot of the tables",
             " behind this page; every run is on <a href='", ORCA_UI, "/runs' rel=noopener>orca.mlake.dev/runs</a>).",
+            " Refreshed every ", _span(refresh_secs()), "; built ", _span(Int(now() - c.built_at)), " ago.",
             " Repos are discovered from the GH Archive days loaded so far",
         )
         if c.sources.days > 0:
@@ -1015,69 +1007,65 @@ def overview(req: Request, mut c: Cache) raises -> Response:
         return internal_error(String(e))
 
 
-def overview_json(req: Request, mut c: Cache) raises -> Response:
-    try:
-        c.refresh()
-        ref ov = c.ov
-        var out = String(
-            '{"as_of":', _q(micros_to_iso(c.sources.as_of_ms * 1000)),
-            ',"days_loaded":', c.sources.days, ',"first_day":', _q(c.sources.first_day),
-            ',"last_day":', _q(c.sources.last_day), ',"repos":', ov.repos,
-            ',"repos_with_history":', ov.with_history, ',"repos_30d_ago":', ov.repos_30_ago,
-            ',"commits":', ov.commits, ',"commits_30d":', ov.commits_30,
-            ',"commits_prev_30d":', ov.commits_prev_30, ',"mojo_lines":', ov.lines,
-            ',"mojo_lines_30d_ago":', ov.lines_30_ago, ',"new_repos_this_month":', ov.new_this_month,
-            ',"new_repos_last_month":', ov.new_last_month, ',"active_repos":', ov.active,
-            ',"buckets":[',
-        )
-        for i in range(len(ov.buckets)):
-            if i > 0:
-                out += ","
-            out.write(
-                '{"bucket":', _q(ov.buckets[i]), ',"repos":', ov.bucket_repos[i],
-                ',"active_repos":', ov.bucket_active[i], "}",
-            )
-        out += '],"families":['
-        for i in range(len(ov.families)):
-            if i > 0:
-                out += ","
-            out.write(
-                '{"family":', _q(ov.families[i]), ',"repos":', ov.family_repos[i],
-                ',"active_repos":', ov.family_active[i], "}",
-            )
+def overview_json(req: Request, c: Cache) raises -> Response:
+    ref ov = c.ov
+    var out = String(
+        '{"as_of":', _q(micros_to_iso(c.sources.as_of_ms * 1000)),
+        ',"days_loaded":', c.sources.days, ',"first_day":', _q(c.sources.first_day),
+        ',"last_day":', _q(c.sources.last_day), ',"repos":', ov.repos,
+        ',"repos_with_history":', ov.with_history, ',"repos_30d_ago":', ov.repos_30_ago,
+        ',"commits":', ov.commits, ',"commits_30d":', ov.commits_30,
+        ',"commits_prev_30d":', ov.commits_prev_30, ',"mojo_lines":', ov.lines,
+        ',"mojo_lines_30d_ago":', ov.lines_30_ago, ',"new_repos_this_month":', ov.new_this_month,
+        ',"new_repos_last_month":', ov.new_last_month, ',"active_repos":', ov.active,
+        ',"buckets":[',
+    )
+    for i in range(len(ov.buckets)):
+        if i > 0:
+            out += ","
         out.write(
-            '],"months":[',
+            '{"bucket":', _q(ov.buckets[i]), ',"repos":', ov.bucket_repos[i],
+            ',"active_repos":', ov.bucket_active[i], "}",
         )
-        for k in range(len(ov.months)):
-            if k > 0:
-                out += ","
-            out.write(
-                '{"month":', _q(ov.months[k]), ',"mojo_lines":', ov.lines_series[k],
-                ',"repos":', ov.repos_series[k], ',"commits":', ov.commits_series[k],
-                ',"tooling":{"none":', ov.tool_none[k], ',"magic":', ov.tool_magic[k],
-                ',"pixi":', ov.tool_pixi[k],
-                ',"bazel":', ov.tool_bazel[k], "}}",
-            )
-        out += '],"rising":['
-        for i in range(len(c.rising)):
-            if i > 0:
-                out += ","
-            out.write(
-                '{"repo":', _q(c.rising[i]), ',"stars_30d":', c.rising_gain[i],
-                ',"stars":', c.rising_stars[i], "}",
-            )
-        out += '],"most_active":['
-        for i in range(len(c.active_repos)):
-            if i > 0:
-                out += ","
-            out.write(
-                '{"repo":', _q(c.active_repos[i]), ',"commits_30d":', c.active_commits[i],
-                ',"mojo_lines_30d":', c.active_lines[i], "}",
-            )
-        out += "]}"
-        return ok_json(out)
-    except e:
-        return internal_error(String(e))
+    out += '],"families":['
+    for i in range(len(ov.families)):
+        if i > 0:
+            out += ","
+        out.write(
+            '{"family":', _q(ov.families[i]), ',"repos":', ov.family_repos[i],
+            ',"active_repos":', ov.family_active[i], "}",
+        )
+    out.write(
+        '],"months":[',
+    )
+    for k in range(len(ov.months)):
+        if k > 0:
+            out += ","
+        out.write(
+            '{"month":', _q(ov.months[k]), ',"mojo_lines":', ov.lines_series[k],
+            ',"repos":', ov.repos_series[k], ',"commits":', ov.commits_series[k],
+            ',"tooling":{"none":', ov.tool_none[k], ',"magic":', ov.tool_magic[k],
+            ',"pixi":', ov.tool_pixi[k],
+            ',"bazel":', ov.tool_bazel[k], "}}",
+        )
+    out += '],"rising":['
+    for i in range(len(c.rising)):
+        if i > 0:
+            out += ","
+        out.write(
+            '{"repo":', _q(c.rising[i]), ',"stars_30d":', c.rising_gain[i],
+            ',"stars":', c.rising_stars[i], "}",
+        )
+    out += '],"most_active":['
+    for i in range(len(c.active_repos)):
+        if i > 0:
+            out += ","
+        out.write(
+            '{"repo":', _q(c.active_repos[i]), ',"commits_30d":', c.active_commits[i],
+            ',"mojo_lines_30d":', c.active_lines[i], "}",
+        )
+    out += "]}"
+    return ok_json(out)
 
 
 def _matches(query: String, c: Cache) raises -> List[Int]:
@@ -1100,9 +1088,8 @@ def _matches(query: String, c: Cache) raises -> List[Int]:
     return hits^
 
 
-def search(req: Request, mut c: Cache) raises -> Response:
+def search(req: Request, c: Cache) raises -> Response:
     try:
-        c.refresh()
         var q = String(url_decode(req.query_param("q")).strip())
         var h = String("<h1>Search</h1>")
         if q.byte_length() == 0:
@@ -1128,9 +1115,8 @@ def search(req: Request, mut c: Cache) raises -> Response:
         return internal_error(String(e))
 
 
-def search_json(req: Request, mut c: Cache) raises -> Response:
+def search_json(req: Request, c: Cache) raises -> Response:
     try:
-        c.refresh()
         var q = String(url_decode(req.query_param("q")).strip())
         var out = String("[")
         if q.byte_length() > 0:
@@ -1174,20 +1160,16 @@ def _lib_json(l: Library) -> String:
     )
 
 
-def index_json(req: Request, mut c: Cache) raises -> Response:
-    try:
-        c.refresh()
-        var out = String("[")
-        var first = True
-        for ref l in c.libs:
-            if not first:
-                out += ","
-            first = False
-            out += _lib_json(l)
-        out += "]"
-        return ok_json(out)
-    except e:
-        return internal_error(String(e))
+def index_json(req: Request, c: Cache) raises -> Response:
+    var out = String("[")
+    var first = True
+    for ref l in c.libs:
+        if not first:
+            out += ","
+        first = False
+        out += _lib_json(l)
+    out += "]"
+    return ok_json(out)
 
 
 def _next_month(m: String) raises -> String:
@@ -1319,15 +1301,34 @@ def _migrations_body(rows: List[VersionMonth]) raises -> String:
         " pre-1.0 (24.x to 0.26.x, one line), then each 1.x minor.</p>",
     )
     h.write(_versions_chart(rows))
-    # The month cell spans its rows; the bar is against the busiest row.
+    var late = List[VersionMonth]()
+    var early = List[VersionMonth]()
+    for ref r in rows:
+        if version_bucket(r.version) == "pre-1.0":
+            early.append(r.copy())
+        else:
+            late.append(r.copy())
+    if len(late) > 0:
+        h.write("<h2>Mojo 1.x and later</h2>", _versions_table(late))
+    if len(early) > 0:
+        # Collapsed: the renumbering's old versions are history.
+        h.write(
+            "<details class=early><summary>Before 1.0 &mdash; ", len(early), " rows</summary>",
+            _versions_table(early), "</details>",
+        )
+    return h^
+
+
+def _versions_table(rows: List[VersionMonth]) raises -> String:
+    """The month, version and repos table for `rows`: the month cell spans its
+    rows, and the bars are against this table's busiest row."""
     var per_month = Dict[String, Int]()
     var top = 1
     for ref r in rows:
         per_month[r.month] = per_month.get(r.month, 0) + 1
         if r.repos > top:
             top = r.repos
-    h.write(
-        "<h2>By month and version</h2>",
+    var h = String(
         "<div class=tbl><table><thead><tr><th>Month</th><th>Version</th>",
         "<th>Repos migrating</th></tr></thead><tbody>",
     )
@@ -1348,9 +1349,8 @@ def _migrations_body(rows: List[VersionMonth]) raises -> String:
     return h^
 
 
-def migrations_page(req: Request, mut c: Cache) raises -> Response:
+def migrations_page(req: Request, c: Cache) raises -> Response:
     try:
-        c.refresh()
         var h = String(
             "<h1>Mojo version migrations</h1><p class=lead>A migration is a repo's lock",
             " file (or its manifest, when there's no lock) moving to a Mojo version between",
@@ -1373,24 +1373,20 @@ def migrations_page(req: Request, mut c: Cache) raises -> Response:
         return internal_error(String(e))
 
 
-def versions_json(req: Request, mut c: Cache) raises -> Response:
-    try:
-        c.refresh()
-        var out = String("[")
-        var first = True
-        for ref r in c.version_rows:
-            if not first:
-                out += ","
-            first = False
-            out.write(
-                '{"month":', _q(r.month), ',"version":', _q(r.version), ',"bucket":',
-                _q(version_bucket(r.version)), ',"family":', _q(version_family(r.version)),
-                ',"libraries":', r.repos, "}",
-            )
-        out += "]"
-        return ok_json(out)
-    except e:
-        return internal_error(String(e))
+def versions_json(req: Request, c: Cache) raises -> Response:
+    var out = String("[")
+    var first = True
+    for ref r in c.version_rows:
+        if not first:
+            out += ","
+        first = False
+        out.write(
+            '{"month":', _q(r.month), ',"version":', _q(r.version), ',"bucket":',
+            _q(version_bucket(r.version)), ',"family":', _q(version_family(r.version)),
+            ',"libraries":', r.repos, "}",
+        )
+    out += "]"
+    return ok_json(out)
 
 
 def _chart(points: List[Point]) -> String:
@@ -1456,9 +1452,8 @@ def _stat(label: String, value: String, note: String = "") -> String:
     )
 
 
-def repo_page(req: Request, mut c: Cache) raises -> Response:
+def repo_page(req: Request, c: Cache) raises -> Response:
     try:
-        c.refresh()
         var repo = String(req.param("owner"), "/", req.param("name"))
         var found = c.find(repo)
         if not found:
@@ -1580,9 +1575,8 @@ def repo_page(req: Request, mut c: Cache) raises -> Response:
         return internal_error(String(e))
 
 
-def repo_json(req: Request, mut c: Cache) raises -> Response:
+def repo_json(req: Request, c: Cache) raises -> Response:
     try:
-        c.refresh()
         var repo = String(req.param("owner"), "/", req.param("name"))
         var found = c.find(repo)
         if not found:
@@ -1822,16 +1816,92 @@ def optimizations(req: Request) raises -> Response:
     return _page("Optimizations", h^, "how")
 
 
+def refresh_secs() -> Int:
+    """`CONSOLE_REFRESH_SECONDS`, else `REFRESH_SECS`."""
+    var v = getenv("CONSOLE_REFRESH_SECONDS")
+    if v.byte_length() > 0:
+        try:
+            var n = Int(v)
+            if n > 0:
+                return n
+        except:
+            pass
+    return REFRESH_SECS
+
+
+def _look(mut sw: Swap[Cache], cur: Cache, t: Int64) raises:
+    """Look at the tables' snapshots and, if one moved or the day changed,
+    build a new `Cache` and swap it in. Raises with the old one still in place."""
+    var src = read_sources()
+    var today = Int(t // 86400)
+    if not needs_build(cur.ready, cur.built_day, today, src.same_as(cur.sources)):
+        return
+    read_days(src)
+    var next = Cache()
+    next._build(today, src^)
+    next.built_at = t
+    sw.put(next^)
+
+
+def _refresher(arg: OpaquePtr) -> OpaquePtr:
+    """The refresher thread: the only one that reads the lake or builds a
+    `Cache`, one build at a time. It uses nothing a request handler holds: each
+    read opens its own catalog and S3 client, and the only thing shared with
+    the handlers is the `Swap`."""
+    ref sw = Pointer[Swap[Cache], MutUntrackedOrigin](unsafe_from_address=Int(arg))[]
+    var interval = refresh_secs()
+    var checked = Int64(0)
+    while True:
+        try:
+            var t = now()
+            var cur = sw.get()
+            if check_due(cur[].ready, t, checked, cur[].built_day, Int(t // 86400), interval):
+                checked = t
+                var started = t
+                try:
+                    _look(sw, cur[], t)
+                    if not cur[].ready:
+                        print("console: first build in", now() - started, "s")
+                    else:
+                        print("console: looked at the tables;", now() - started, "s")
+                except e:
+                    # Keep serving what there is; look again soon.
+                    print("console: refresh failed:", e)
+                    checked = t - Int64(interval) + Int64(min(interval, RETRY_SECS))
+        except e:
+            print("console: refresher:", e)
+        sleep(1.0)
+
+
+def _warming_up() raises -> Response:
+    var resp = _page(
+        "Warming up",
+        _empty("Warming up", "The census is reading the lake for the first time; this page reloads itself."),
+        "",
+    )
+    resp.status = 503
+    resp.reason = "Service Unavailable"
+    resp.headers.set("Retry-After", "5")
+    resp.headers.set("Refresh", "5")
+    return resp^
+
+
 @fieldwise_init
 struct Site(Handler, Copyable):
-    """One route of the console, with the shared `Cache`."""
+    """One route of the console, with the shared `Swap` of `Cache`s."""
 
     var page: Int
     var cache: Int
-    """The address of the `Cache`, which lives as long as the process."""
+    """The address of the `Swap[Cache]`, which lives as long as the process."""
 
     def serve(self, req: Request) raises -> Response:
-        ref c = Pointer[Cache, MutUntrackedOrigin](unsafe_from_address=self.cache)[]
+        ref sw = Pointer[Swap[Cache], MutUntrackedOrigin](unsafe_from_address=self.cache)[]
+        # One reference for the whole request: a rebuild that finishes meanwhile
+        # doesn't change what this page reads.
+        var held = sw.get()
+        ref c = held[]
+        if not c.ready:
+            return _warming_up()
         if self.page == 0:
             return overview(req, c)
         if self.page == 1:
@@ -1858,9 +1928,11 @@ def _moved_to_migrations(req: Request) raises -> Response:
 
 
 def main() raises:
-    var p = unsafe_alloc[Cache](1)
-    p.unsafe_write(Cache())
+    var p = unsafe_alloc[Swap[Cache]](1)
+    p.unsafe_write(Swap[Cache](Cache()))
     var cache = Int(p)
+    var refresher = ThreadHandle.spawn[_refresher](OpaquePtr(unsafe_from_address=cache))
+    refresher.detach()
     var r = Router()
     r.get("/", Site(0, cache))
     r.get("/repos", Site(1, cache))
