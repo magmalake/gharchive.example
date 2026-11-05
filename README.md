@@ -111,6 +111,19 @@ pixi run build      # build/orca, build/{gharchive,mojo_repos,mojo_history,mojo_
 pixi run test       # version ordering, history and tag parsing, events, activity, GitHub stats
 ```
 
+### The console on the deployed data
+
+The quickest way to try a console change: build it and point it at the
+warehouse the AWS pipelines write. It only reads. The S3 client takes
+credentials from the environment, so export your AWS login first:
+
+```sh
+pixi run build-console
+eval "$(aws configure export-credentials --profile <profile> --format env)"
+export AWS_REGION=us-east-2
+ORCA_WAREHOUSE=s3://mlake-public-617847241090/warehouse PORT=8080 pixi run ./build/console
+```
+
 ### The pipelines on their own
 
 No database needed; `GHARCHIVE_HOURS` keeps the download to two hourly files
