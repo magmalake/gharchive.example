@@ -4,6 +4,7 @@
 """
 
 from std.os import getenv
+from dista.codec import decode, encode
 from std.testing import TestSuite, assert_equal, assert_true
 
 from datafiles import DataFiles
@@ -11,6 +12,7 @@ from events import parse_events
 from iceberg.io import FileIO
 from iceberg.write import WriteOptions, write_data_files
 from lake import events_schema, events_spec
+from orca.tables import DataFiles as FileEntries
 
 
 def _lines() -> List[UInt8]:
@@ -32,18 +34,21 @@ def test_round_trip() raises:
         0, WriteOptions(),
     )
     assert_equal(len(files), 2)  # two days, two partitions
+    # The struct crosses by dista's reflection: its plain fields as they
+    # are, `files` through orca's `DataFiles` Codec (iceberg's wire form).
     var sent = DataFiles()
-    sent.files = files.copy()
+    sent.files = FileEntries(files.copy())
     sent.rows = 300
     sent.parse_ms = 7
     var bytes = List[UInt8]()
-    sent.encode(bytes)
+    encode(sent, bytes)
     var pos = 0
-    var got = DataFiles.decode(Span(bytes), pos)
+    var back = decode[DataFiles](Span(bytes), pos)
     assert_equal(pos, len(bytes))
-    assert_equal(got.rows, 300)
-    assert_equal(got.parse_ms, 7)
-    assert_equal(len(got.files), len(files))
+    assert_equal(back.rows, 300)
+    assert_equal(back.parse_ms, 7)
+    ref got = back.files
+    assert_equal(len(got), len(files))
     for k in range(len(files)):
         ref a = files[k]
         ref b = got.files[k]
