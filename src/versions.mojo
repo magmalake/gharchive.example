@@ -172,13 +172,23 @@ def names_mojo(text: String) -> Bool:
 
 
 def tooling(
-    pixi_toml: Bool, pixi_lock: Bool, mojoproject: Bool, magic_lock: Bool
+    pixi_toml: Bool,
+    pixi_lock: Bool,
+    mojoproject: Bool,
+    magic_lock: Bool,
+    bazel: Bool = False,
 ) -> String:
-    """`none`, `magic` or `pixi`, from which files a commit has.
+    """`none`, `magic`, `pixi` or `bazel`, from which files a commit has.
+
+    A repository built with Bazel (`bazel`: a root `MODULE.bazel`,
+    `WORKSPACE`, `WORKSPACE.bazel` or `BUILD.bazel`) is `bazel` even if it
+    has pixi files too.
 
     magic read both `mojoproject.toml` and `pixi.toml` and wrote
     `magic.lock`; pixi writes `pixi.lock`. A lock file decides; without one
     the manifest does."""
+    if bazel:
+        return "bazel"
     if magic_lock:
         return "magic"
     if pixi_lock:

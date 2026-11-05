@@ -20,6 +20,9 @@ comptime ACTIVITY = "mojo.activity"
 comptime RELEASES = "mojo.releases"
 comptime ACTIVITY_REPOS = "mojo.activity_repos"
 comptime TAGS = "mojo.tags"
+comptime CANDIDATES = "gharchive.candidates"
+comptime REPO_HOUR = "gharchive.repo_hour"
+comptime GH_RELEASES = "gharchive.releases"
 
 comptime EVENTS_SCHEMA = (
     '{"schema-id":0,"type":"struct","fields":['
@@ -168,6 +171,92 @@ comptime TAGS_SCHEMA = (
 (peeled), the tagger's date for an annotated tag or the commit's for a
 lightweight one, and the tooling and Mojo version at that commit when it
 is on the first-parent history mojo.commits has."""
+
+
+comptime CANDIDATES_SCHEMA = (
+    '{"schema-id":0,"type":"struct","fields":['
+    '{"id":1,"name":"repo","required":true,"type":"string"},'
+    '{"id":2,"name":"hour","required":true,"type":"timestamptz"},'
+    '{"id":3,"name":"reason","required":true,"type":"string"},'
+    '{"id":4,"name":"first_seen","required":true,"type":"timestamptz"},'
+    '{"id":5,"name":"sha","required":false,"type":"string"}]}'
+)
+"""What gharchive's hour tasks found while they parsed the events: one row
+per (repository, hour, reason), the reasons `detect.scan_event` knows
+(`name`, `language`, `push`, `manifest`, `description`). `first_seen` is the
+earliest event of that repository in the hour that made it a candidate for
+any reason, `sha` the first pushed commit that may touch `.mojo` files."""
+
+comptime REPO_HOUR_SCHEMA = (
+    '{"schema-id":0,"type":"struct","fields":['
+    '{"id":1,"name":"repo","required":true,"type":"string"},'
+    '{"id":2,"name":"hour","required":true,"type":"timestamptz"},'
+    '{"id":3,"name":"actor","required":false,"type":"string"},'
+    '{"id":4,"name":"events","required":true,"type":"long"},'
+    '{"id":5,"name":"stars","required":true,"type":"long"},'
+    '{"id":6,"name":"forks","required":true,"type":"long"},'
+    '{"id":7,"name":"releases","required":true,"type":"long"},'
+    '{"id":8,"name":"issues_opened","required":true,"type":"long"},'
+    '{"id":9,"name":"prs_opened","required":true,"type":"long"},'
+    '{"id":10,"name":"pushes","required":true,"type":"long"}]}'
+)
+"""Every event of GH Archive counted per (repository, actor, hour), sorted
+by repository, so a day's distinct actors of a repository are the distinct
+`actor`s of its rows. Counts as in `mojo.activity`; `actor` is null for an
+event without one. About half a row an event."""
+
+comptime GH_RELEASES_SCHEMA = (
+    '{"schema-id":0,"type":"struct","fields":['
+    '{"id":1,"name":"repo","required":true,"type":"string"},'
+    '{"id":2,"name":"created_at","required":true,"type":"timestamptz"},'
+    '{"id":3,"name":"actor","required":false,"type":"string"},'
+    '{"id":4,"name":"tag","required":true,"type":"string"},'
+    '{"id":5,"name":"name","required":false,"type":"string"},'
+    '{"id":6,"name":"published_at","required":false,"type":"timestamptz"},'
+    '{"id":7,"name":"prerelease","required":true,"type":"boolean"}]}'
+)
+"""Every published ReleaseEvent, of every repository."""
+
+
+def candidates_schema() raises -> Schema:
+    return Schema.parse(CANDIDATES_SCHEMA)
+
+
+def repo_hour_schema() raises -> Schema:
+    return Schema.parse(REPO_HOUR_SCHEMA)
+
+
+def gh_releases_schema() raises -> Schema:
+    return Schema.parse(GH_RELEASES_SCHEMA)
+
+
+def index_properties() -> Dict[String, String]:
+    """The tables written beside gharchive.events keep its week of snapshots,
+    and `gharchive.repo_hour` small row groups, so a scan for a few
+    repositories reads a few of each file's row groups."""
+    var p = events_properties()
+    p["write.parquet.row-group-size-rows"] = "16384"
+    return p^
+
+
+def hour_spec(source_id: Int, name: String) raises -> PartitionSpec:
+    """By the day of a timestamp column."""
+    return PartitionSpec(
+        0,
+        [PartitionField.single(source_id, 1000, name, parse_transform("day"))],
+    )
+
+
+def candidates_spec() raises -> PartitionSpec:
+    return hour_spec(2, "hour_day")
+
+
+def repo_hour_spec() raises -> PartitionSpec:
+    return hour_spec(2, "hour_day")
+
+
+def gh_releases_spec() raises -> PartitionSpec:
+    return hour_spec(2, "created_day")
 
 
 def events_schema() raises -> Schema:

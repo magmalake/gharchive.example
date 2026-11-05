@@ -620,6 +620,49 @@ an hour or needs reading library source), **low** (friction).
 
 ---
 
+## 32. A snapshot needs a data file, so an empty hour needs a marker row (low)
+
+- **Tried:** gharchive's hour tasks write `gharchive.candidates` and
+  `gharchive.releases` beside the events, and an hour can have no candidates.
+  `orca.tables.append_files` documents that "no files commits an empty
+  snapshot", which keeps a table's commits numbered one a step's hour.
+- **Happened:** `iceberg.prepare_append` and `prepare_commit` both raise "an
+  append needs at least one data file" / "a commit must add or remove at
+  least one file", and `write_data_files` skips a batch with no rows, so an
+  empty hour can't be committed at all.
+- **Did instead:** an hour with nothing for a table writes one row for no
+  repository (`repo = ""`, reason `hour`), which nothing matches
+  (`hourindex.HourIndex.marker`).
+- **Fix:** iceberg should commit an empty append (a snapshot with no
+  manifest), or write a zero-row file; orca's docstring says it can.
+
+## 33. A repository found later needs every repository's history, so the index is big (medium)
+
+- **Tried:** mojo_activity re-read a whole day of events (about 45 s) per
+  loaded day for each repository found after the days were loaded.
+- **Did instead:** gharchive's hour tasks also write `gharchive.repo_hour`:
+  one row per (repository, actor, hour) for **every** repository (about one
+  row per two events, 100K an hour in 2023), sorted by repository in 16K-row
+  row groups, because only a candidate can enter `mojo.repos` but which one
+  isn't known until a later day; a day's catch-up scan is then `repo in
+  (...)` plus a day range, reading a few row groups of each hour's file.
+  mojo_activity's catch-up still makes a dista task per loaded day (24 small
+  files each); it no longer reads event bytes.
+- **Fix:** a daily compaction of `gharchive.repo_hour` into one file per
+  day (or `bucket[N](repo)` partitions) would cut a catch-up from 24 file
+  opens per day to one, and iceberg's `in` on a bucketed column would prune
+  the files before opening them.
+
+## 34. `bazel` as tooling, and rewriting histories already read (low)
+
+- `history.tooling` ranks `bazel` (a root `MODULE.bazel`, `WORKSPACE`,
+  `WORKSPACE.bazel` or `BUILD.bazel`) above pixi, magic and none.
+  mojo_history skips repositories it has read, so `mojo_retool` re-reads
+  them and replaces their rows in `mojo.commits`, `mojo.migrations` and
+  `mojo.tags` with one `overwrite` snapshot a table. There is no row-level
+  delete or update in the writers used here, so the rows of the other
+  repositories are read and written again.
+
 ## What the local run did, the orca way (orca 0.3.1)
 
 A fresh lake and `orca` database (the `mojo.repos` schema changed), the

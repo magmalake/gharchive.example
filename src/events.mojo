@@ -14,7 +14,8 @@ from datafiles import BatchSink, DataFiles, TableWriter
 from fetch import Download
 from deflate import MARGIN, GzipReader, InflateStatus
 from gzstream import GzInput, Whole
-from jscan import Range, find_newline, scan_event, text, timestamp_micros
+from hourindex import HourIndex, write_index
+from jscan import Range, days_from_civil, find_newline, scan_event, text, timestamp_micros
 from lake import events_schema
 
 comptime ROWS_PER_BATCH = 50_000
@@ -164,6 +165,21 @@ def _int(s: String) -> Int64:
     return v
 
 
+struct EventsAndIndex(Movable):
+    var batches: List[RecordBatch]
+    var index: HourIndex
+
+    def __init__(out self, var batches: List[RecordBatch], var index: HourIndex):
+        self.batches = batches^
+        self.index = index^
+
+    def take_batches(deinit self) -> List[RecordBatch]:
+        return self.batches^
+
+    def take_index(deinit self) -> HourIndex:
+        return self.index^
+
+
 struct EventParser(Movable):
     """NDJSON lines of an hour, fed a chunk of whole lines at a time, into
     batches of `ROWS_PER_BATCH`."""
@@ -172,12 +188,17 @@ struct EventParser(Movable):
     var cols: _Cols
     var rows: Int
     var bad: Int
+    var index: HourIndex
+    var indexing: Bool
+    """Whether `index` takes every event (candidates, counts, releases)."""
 
-    def __init__(out self) raises:
+    def __init__(out self, indexing: Bool = False) raises:
         self.out = List[RecordBatch]()
         self.cols = _Cols()
         self.rows = 0
         self.bad = 0
+        self.index = HourIndex()
+        self.indexing = indexing
 
     def feed(mut self, data: Span[UInt8, _], begin: Int, n: Int) raises:
         """The lines in `data[begin:n]`; a last line without its newline is
@@ -196,10 +217,19 @@ struct EventParser(Movable):
             return
         self.cols.id.add_i64(_int(text(data, f.id)))
         _add_text(self.cols.type, data, f.type, False)
-        self.cols.created.add_i64(timestamp_micros(data, f.created_at))
+        var at = timestamp_micros(data, f.created_at)
+        self.cols.created.add_i64(at)
         _add_text(self.cols.repo, data, f.repo_name, False)
         _add_text(self.cols.actor, data, f.actor_login, True)
         var p = f.payload
+        if self.indexing:
+            self.index.add(
+                text(data, f.type),
+                text(data, f.repo_name),
+                text(data, f.actor_login),
+                at,
+                data[p.start : p.end] if p.found() else data[0:0],
+            )
         if p.found():
             self.cols.payload.add_bytes(data[p.start : p.end])
         else:
@@ -211,6 +241,11 @@ struct EventParser(Movable):
             self.out.append(full^.take())
 
     def finish(deinit self) raises -> List[RecordBatch]:
+        var both = self^.finish_index()
+        return both^.take_batches()
+
+    def finish_index(deinit self) raises -> EventsAndIndex:
+        """The last batches, and what `index` collected."""
         var out = self.out^
         if self.rows % ROWS_PER_BATCH != 0:
             out.append(self.cols^.take())
@@ -218,7 +253,7 @@ struct EventParser(Movable):
             _ = self.cols^
         if self.bad > 0:
             print("gharchive: skipped", self.bad, "lines without id or created_at")
-        return out^
+        return EventsAndIndex(out^, self.index^)
 
 
 def parse_events(data: Span[UInt8, _]) raises -> List[RecordBatch]:
@@ -276,6 +311,14 @@ def parse_gz[S: BatchSink](gz: Span[UInt8, _], mut sink: S) raises -> Timing:
 def decode_gz[
     I: GzInput, S: BatchSink
 ](input: I, mut sink: S) raises -> Timing:
+    """`decode_index` without the index."""
+    var none = HourIndex()
+    return decode_index(input, sink, none, False)
+
+
+def decode_index[
+    I: GzInput, S: BatchSink
+](input: I, mut sink: S, mut index: HourIndex, indexing: Bool) raises -> Timing:
     """A `.json.gz` hour, gunzipped a window at a time into the parser, so
     the hour's JSON is never in memory at once; each batch goes to `sink`
     as soon as it is full. The input may still be arriving: what is there
@@ -285,7 +328,7 @@ def decode_gz[
     var sink_ns = 0
     var wait_ns = 0
     var gz = GzipReader(CHUNK * 2)
-    var p = EventParser()
+    var p = EventParser(indexing)
     var lo = 0
     while True:
         var complete = input.complete()
@@ -311,7 +354,11 @@ def decode_gz[
             var t1 = perf_counter_ns()
             _ = input.wait(gz.input_used() + MARGIN)
             wait_ns += Int(perf_counter_ns() - t1)
-    var rest = p^.finish()
+    var marker = index.marker
+    var done = p^.finish_index()
+    swap(index, done.index)
+    index.marker = marker
+    var rest = done^.take_batches()
     var t1 = perf_counter_ns()
     for i in range(len(rest)):
         var b = RecordBatch()
@@ -326,15 +373,30 @@ def decode_gz[
     )
 
 
-def fetch_hour(day: String, hour: Int, table: Table) raises -> DataFiles:
+def fetch_hour(
+    day: String,
+    hour: Int,
+    table: Table,
+    candidates: Table,
+    repo_hour: Table,
+    releases: Table,
+) raises -> DataFiles:
     """Downloads one hour of GH Archive and, as it arrives, decompresses
     and parses it and writes it into `table`'s data files; returns them
     uncommitted."""
     var t0 = perf_counter_ns()
     var dl = Download(hour_url(day, hour))
     var w = TableWriter(table)
-    var timing = decode_gz(dl, w)
+    var index = HourIndex(
+        Int64(days_from_civil(Int(day[byte=0:4]), Int(day[byte=5:7]), Int(day[byte=8:10])))
+        * 86_400_000_000
+        + Int64(hour) * 3_600_000_000
+    )
+    var timing = decode_index(dl, w, index, True)
     var out = w^.finish()
+    var t_index = perf_counter_ns()
+    out.index = write_index(index, candidates, repo_hour, releases)
+    out.index_ms = Int(perf_counter_ns() - t_index) // 1_000_000
     out.download_ms = dl.ms()
     out.gunzip_ms = timing.gunzip_ms
     out.parse_ms = timing.parse_ms

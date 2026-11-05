@@ -7,7 +7,7 @@ from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
 from std.os import getenv
 
-from history import History, _parse_log, _read_tags, _sh, is_mojo_file, safe_repo
+from history import History, _parse_log, _read_tags, _sh, is_bazel_file, is_mojo_file, safe_repo
 from history import CommitRow, MigrationRow, TagRow, join_tags, parse_tags
 
 
@@ -42,6 +42,43 @@ def test_lines_and_files() raises:
     assert_equal(h.commits.items[1].committed_at, 1700000100 * 1_000_000)
     assert_equal(h.commits.items[0].tooling, "none")
     assert_equal(len(h.migrations), 0)
+
+
+def test_bazel_outranks_pixi() raises:
+    # pixi.toml first, then a root MODULE.bazel (bazel, though pixi is still
+    # there), a nested WORKSPACE that doesn't count, then Bazel's files go.
+    var log = String(
+        "@@aaa 1700000000\n\n",
+        " create mode 100644 pixi.toml\n create mode 100644 a.mojo\n",
+        "@@bbb 1700000100\n\n",
+        " create mode 100644 MODULE.bazel\n",
+        "@@ccc 1700000200\n\n",
+        " create mode 100644 sub/WORKSPACE\n",
+        "@@ddd 1700000300\n\n",
+        " delete mode 100644 MODULE.bazel\n",
+        "@@eee 1700000400\n\n",
+        " create mode 100644 BUILD.bazel\n",
+    )
+    var h = History.empty("o/r")
+    _parse_log("o/r", "/nonexistent", log, h)
+    assert_equal(len(h.commits), 5)
+    assert_equal(h.commits.items[0].tooling, "pixi")
+    assert_equal(h.commits.items[1].tooling, "bazel")
+    assert_equal(h.commits.items[2].tooling, "bazel")
+    assert_equal(h.commits.items[3].tooling, "pixi")
+    assert_equal(h.commits.items[4].tooling, "bazel")
+    var kinds = List[String]()
+    for ref m in h.migrations.items:
+        if m.kind == "tooling":
+            kinds.append(String(m.from_value, ">", m.to_value))
+    assert_equal(len(kinds), 4)
+    assert_equal(kinds[0], "none>pixi")
+    assert_equal(kinds[1], "pixi>bazel")
+    assert_equal(kinds[2], "bazel>pixi")
+    assert_equal(kinds[3], "pixi>bazel")
+    assert_true(is_bazel_file("WORKSPACE.bazel"))
+    assert_false(is_bazel_file("sub/BUILD.bazel"))
+    assert_false(is_bazel_file("BUILD"))
 
 
 def test_mojo_files() raises:

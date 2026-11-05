@@ -156,6 +156,16 @@ def safe_repo(repo: String) -> Bool:
     return slashes == 1 and not repo.startswith(".") and ".." not in repo
 
 
+def is_bazel_file(path: StringSlice) -> Bool:
+    """The files that make a repository a Bazel one, at its root."""
+    return (
+        path == "MODULE.bazel"
+        or path == "WORKSPACE"
+        or path == "WORKSPACE.bazel"
+        or path == "BUILD.bazel"
+    )
+
+
 def is_mojo_file(path: StringSlice) -> Bool:
     return path.endswith(".mojo") or path.endswith(".🔥")
 
@@ -186,6 +196,7 @@ struct _State:
     var pixi_lock: Bool
     var mojoproject: Bool
     var magic_lock: Bool
+    var bazel: Bool
     var touched: Bool
     var lines: Int64
     var files: Int64
@@ -207,6 +218,7 @@ struct _State:
         self.pixi_lock = False
         self.mojoproject = False
         self.magic_lock = False
+        self.bazel = False
         self.touched = False
         self.lines = 0
         self.files = 0
@@ -220,6 +232,9 @@ struct _State:
             self.mojoproject = exists
         elif path == "magic.lock":
             self.magic_lock = exists
+        elif is_bazel_file(path):
+            self.bazel = exists
+            return  # the tooling changes, the Mojo version doesn't
         else:
             return
         self.touched = True
@@ -248,7 +263,9 @@ def _finish(repo: String, dir: String, mut st: _State, mut out: History) raises:
     """Closes the commit `st` is at: one row, and any migrations."""
     if st.sha.byte_length() == 0:
         return
-    var new_tool = tooling(st.pixi_toml, st.pixi_lock, st.mojoproject, st.magic_lock)
+    var new_tool = tooling(
+        st.pixi_toml, st.pixi_lock, st.mojoproject, st.magic_lock, st.bazel
+    )
     if st.touched:
         var v = _version(dir, st.sha, st)
         var any_file = st.pixi_toml or st.pixi_lock or st.mojoproject or st.magic_lock

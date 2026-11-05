@@ -82,6 +82,10 @@ def test_tooling() raises:
     assert_equal(tooling(True, False, False, True), "magic")
     assert_equal(tooling(True, True, False, False), "pixi")
     assert_equal(tooling(False, False, True, False), "magic")
+    assert_equal(tooling(False, False, False, False, True), "bazel")
+    # Bazel ranks above pixi, magic and none.
+    assert_equal(tooling(True, True, False, False, True), "bazel")
+    assert_equal(tooling(True, False, True, True, True), "bazel")
 
 
 def main() raises:

@@ -14,7 +14,10 @@ ways, with an agent from [PROMPT.md](PROMPT.md) or step by step.
 
 ```
 GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ mojo.repos ─┬──────────┐
- (daily, 03:00 UTC,         (by day)    │    (sensor)      mojo.checked │          │
+ (daily, 03:00 UTC,         (by day)    │    (sensor on    mojo.checked │          │
+                            + .candidates,  │    .candidates)                │          │
+                            .repo_hour,     │                                │          │
+                            .releases       │                                │          │
   a dista task per hour)                │                               │          │
                                         └──mojo_activity──▶ mojo.activity          │
                                            (sensor on both; mojo.releases          │
@@ -39,8 +42,20 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   in order, and a retry skips the hours already committed. A new run of a
   day that has rows (`orca backfill --rerun`) replaces them: its first
   hour's commit removes the day's earlier files.
-- **`pipelines/mojo_repos.mojo`**: a sensor on `gharchive.events`. For each
-  day it finds candidates (repository names, the `language` of repository
+  While an hour's task parses its events it also builds three small tables,
+  written and committed with the events (one snapshot an hour each):
+  `gharchive.candidates` (one row per repository, hour and reason: the
+  `detect.scan_event` rules below), `gharchive.repo_hour` (the counts
+  `mojo.activity` needs, per repository, actor and hour, of **every**
+  repository: about 100K rows an hour, sorted, so a repository found later
+  has its whole history without reading events again) and `gharchive.releases`
+  (published ReleaseEvents). An hour with nothing for a table writes one
+  row for no repository (`repo = ""`) so every hour has a snapshot.
+- **`pipelines/gharchive_index.mojo`**: a one-off that fills those three
+  tables for days loaded before gharchive wrote them, reading each hour of
+  `gharchive.events` once (`orca backfill gharchive_index <days>`).
+- **`pipelines/mojo_repos.mojo`**: a sensor on `gharchive.candidates`. For each
+  day it reads the candidates (repository names, the `language` of repository
   objects that pull-request and fork payloads embed, commit messages
   naming `.mojo`/`.🔥` files or `mojoproject.toml`) and checks them with
   GitHub (`language: Mojo`, a `pixi.toml` or `mojoproject.toml` naming a
@@ -53,7 +68,7 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   `mojo.repos`: each snapshot mojo_repos commits starts runs for the
   repositories it adds. Each repository is cloned in a
   dista task and its first-parent history read into `mojo.commits` (lines
-  and files of Mojo at each commit, the tooling, none → magic → pixi, and
+  and files of Mojo at each commit, the tooling, none → magic → pixi → bazel, and
   the Mojo version the lock file or manifest names), `mojo.migrations`
   (each change of tooling or Mojo version) and `mojo.tags` (each git tag:
   the commit, annotated or not, its date, and the tooling and Mojo version
@@ -61,13 +76,18 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   again; one with a history and no tags is cloned without file contents
   for its tags only, so `orca backfill --rerun mojo_history @all` fills
   `mojo.tags` for repositories read before tags were.
-- **`pipelines/mojo_activity.mojo`**: daily, a sensor on `gharchive.events`
-  and `mojo.repos`, no API calls. For each day, every repository in
+- **`pipelines/mojo_retool.mojo`**: a one-off that re-reads the histories
+  mojo_history already read and replaces their rows (used when `tooling`
+  learned `bazel`, a root `MODULE.bazel`/`WORKSPACE`/`BUILD.bazel`, which
+  outranks pixi: `orca backfill --rerun mojo_retool @all`).
+- **`pipelines/mojo_activity.mojo`**: daily, a sensor on
+  `gharchive.repo_hour`, `gharchive.releases` and `mojo.repos`, no API calls
+  and no event bytes. For each day, every repository in
   `mojo.repos`: `mojo.activity` (events, stars as WatchEvents, forks,
   published releases, issues and pull requests opened, pushes, distinct
   actors) and `mojo.releases` (tag, name, published, prerelease), both by
   month. A repository not yet in `mojo.activity_repos` is caught up: the
-  run also reads every other day the events table has (from the day the
+  run also reads every other day `gharchive.repo_hour` has (from the day the
   repository was created) for it, a dista task a day, so a repository
   found today has its whole history. A run replaces the rows of the
   (repository, day) pairs it computed and keeps the rest, one run at a

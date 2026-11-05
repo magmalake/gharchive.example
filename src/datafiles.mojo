@@ -13,6 +13,8 @@ from orca.tables import DataFiles as FileEntries
 from orca.tables import FileWriter
 from parquet import RecordBatch
 
+from hourindex import IndexFiles
+
 
 struct DataFiles(Copyable, Movable):
     """An hour's data files, its row count, and where its time went (ms).
@@ -29,6 +31,10 @@ struct DataFiles(Copyable, Movable):
     var wait_ms: Int
     """Decoding waiting for the download."""
     var total_ms: Int
+    var index: IndexFiles
+    """The hour's candidates, repository counts and releases."""
+    var index_ms: Int
+    """Building them and writing their files."""
 
     def __init__(out self):
         self.files = FileEntries()
@@ -39,6 +45,8 @@ struct DataFiles(Copyable, Movable):
         self.write_ms = 0
         self.wait_ms = 0
         self.total_ms = 0
+        self.index = IndexFiles()
+        self.index_ms = 0
 
 
 trait BatchSink:

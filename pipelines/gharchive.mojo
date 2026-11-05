@@ -25,28 +25,40 @@ from std.time import perf_counter_ns
 
 from dista import ObjectRef, Task2
 from orca import Cron, Ctx, Daily, Day, Mapped, Pipeline, Step, Tasks, orca_main
-from iceberg.commit import FileChanges
-from orca.tables import (
-    append,
-    append_files,
-    commit,
-    ensure_table,
-    find_commit,
-    load_dataset,
-)
-from parquet import RecordBatch
+from orca.tables import ensure_table, load_dataset
 
 from datafiles import DataFiles
 from events import fetch_hour, parse_hours
-from days import day_text, days_of
-from lake import EVENTS, events_properties, events_schema, events_spec
-from replace import partition_files
+from indexing import commit_hour, committed_hours, day_files
+from lake import (
+    CANDIDATES,
+    EVENTS,
+    GH_RELEASES,
+    REPO_HOUR,
+    candidates_schema,
+    candidates_spec,
+    events_properties,
+    events_schema,
+    events_spec,
+    gh_releases_schema,
+    gh_releases_spec,
+    index_properties,
+    repo_hour_schema,
+    repo_hour_spec,
+)
 
 
 def hour_task(day: String, hour: Int) raises -> DataFiles:
-    """On a worker: the hour, written into the table but not committed."""
+    """On a worker: the hour, written into the tables but not committed."""
     try:
-        return fetch_hour(day, hour, load_dataset(EVENTS))
+        return fetch_hour(
+            day,
+            hour,
+            load_dataset(EVENTS),
+            load_dataset(CANDIDATES),
+            load_dataset(REPO_HOUR),
+            load_dataset(GH_RELEASES),
+        )
     except e:
         raise Error(day, " hour ", hour, ": ", e)
 
@@ -58,42 +70,53 @@ comptime GhTasks = Tasks[Hour]
 def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
     var day = String(d)
     var hours = parse_hours(getenv("GHARCHIVE_HOURS"))
+    var props = index_properties()
     var table = ensure_table(
         ctx, EVENTS, events_schema(), events_spec(), events_properties()
+    )
+    var cand_t = ensure_table(
+        ctx, CANDIDATES, candidates_schema(), candidates_spec(), props
+    )
+    var hour_t = ensure_table(
+        ctx, REPO_HOUR, repo_hour_schema(), repo_hour_spec(), props
+    )
+    var rel_t = ensure_table(
+        ctx, GH_RELEASES, gh_releases_schema(), gh_releases_spec(), props
     )
     ref rt = ctx.runtime[GhTasks]()
     var window = max(1, Int(getenv("GHARCHIVE_PARALLEL", "4")))
 
     # Hours an earlier attempt of this step already committed come first in
-    # its commit order; recognise them without fetching anything.
-    var done = 0
-    while done < len(hours) and find_commit(ctx, table) >= 0:
-        _ = append(ctx, table, List[RecordBatch]())
-        done += 1
-    if done > 0:
-        ctx.log(String(day, ": ", done, " hours already committed"))
+    # its commit order; recognise them without fetching anything. Each
+    # table counts its own, and the hours are fetched from the first one
+    # that is missing from any of them.
+    var d_ev = committed_hours(ctx, table, len(hours))
+    var d_cand = committed_hours(ctx, cand_t, len(hours))
+    var d_hour = committed_hours(ctx, hour_t, len(hours))
+    var d_rel = committed_hours(ctx, rel_t, len(hours))
+    var done = min(min(d_ev, d_cand), min(d_hour, d_rel))
+    if d_ev > 0:
+        ctx.log(String(day, ": ", d_ev, " hours already committed"))
 
     # Rows an earlier run left for this day, which this run's first commit
-    # replaces.
+    # to each table replaces.
     var old = List[String]()
-    if done == 0:
-        var dd = days_of(day)
-        var parts = Dict[Int, Bool]()
-        parts[Int(dd)] = True
-        var f = partition_files(
-            table,
-            parts,
-            String(
-                '["and",[">=","created_at","', day, 'T00:00:00Z"],',
-                '["<","created_at","', day_text(dd + 1), 'T00:00:00Z"]]',
-            ),
-        )
-        old = f.paths.copy()
+    var old_cand = List[String]()
+    var old_hour = List[String]()
+    var old_rel = List[String]()
+    if d_ev == 0:
+        old = day_files(table, day, "created_at")
         if len(old) > 0:
             ctx.log(String(
-                day, ": replacing ", f.rows, " rows in ", len(old),
-                " files an earlier run committed",
+                day, ": replacing the ", len(old),
+                " event files an earlier run committed",
             ))
+    if d_cand == 0:
+        old_cand = day_files(cand_t, day, "hour")
+    if d_hour == 0:
+        old_hour = day_files(hour_t, day, "hour")
+    if d_rel == 0:
+        old_rel = day_files(rel_t, day, "created_at")
 
     var refs = List[ObjectRef[DataFiles]]()
     var next = done
@@ -110,15 +133,16 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
         var t0 = perf_counter_ns()
         var id: Int64
         try:
-            # An hour with no files still commits a snapshot, which keeps
-            # the numbering aligned.
-            if i == done and len(old) > 0:
-                var change = FileChanges()
-                change.added_data = got.files.files.copy()
-                change.removed = old.copy()
-                id = commit(ctx, table, "overwrite", change^)
-            else:
-                id = append_files(ctx, table, got.files)
+            id = commit_hour(ctx, table, i, d_ev, old, got.files.files)
+            _ = commit_hour(
+                ctx, cand_t, i, d_cand, old_cand, got.index.candidates.files
+            )
+            _ = commit_hour(
+                ctx, hour_t, i, d_hour, old_hour, got.index.repo_hour.files
+            )
+            _ = commit_hour(
+                ctx, rel_t, i, d_rel, old_rel, got.index.releases.files
+            )
         except e:
             raise Error(day, " hour ", hours[i], ": committing: ", e)
         var commit_ms = Int(perf_counter_ns() - t0) // 1_000_000
@@ -129,8 +153,11 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
                 len(got.files), " files, snapshot ", id, " (task ",
                 got.total_ms, " ms: download ", got.download_ms,
                 " ms overlapping gunzip ", got.gunzip_ms, " ms, parse ",
-                got.parse_ms, " ms, write ", got.write_ms, " ms, waiting ",
-                got.wait_ms, " ms; commit ", commit_ms, " ms)",
+                got.parse_ms, " ms, write ", got.write_ms, " ms, index ",
+                got.index_ms, " ms: ", got.index.candidate_rows,
+                " candidates, ", got.index.repo_hour_rows, " repo-hours, ",
+                got.index.release_rows, " releases; waiting ", got.wait_ms,
+                " ms; commit ", commit_ms, " ms)",
             )
         )
     ctx.log(String(day, ": ", rows, " events in ", len(hours) - done, " hours"))
@@ -138,7 +165,13 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
 
 
 comptime LoadDay = Step[
-    "load_day", Day, Int64, load_day, Mapped, retries=2, writes=[EVENTS]
+    "load_day",
+    Day,
+    Int64,
+    load_day,
+    Mapped,
+    retries=2,
+    writes=[EVENTS, CANDIDATES, REPO_HOUR, GH_RELEASES],
 ]
 comptime GhArchive = Pipeline[
     "gharchive",
