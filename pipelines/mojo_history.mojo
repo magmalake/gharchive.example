@@ -102,11 +102,14 @@ def histories(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
     var m_from = ColumnBuilder.of(ms, 5)
     var m_to = ColumnBuilder.of(ms, 6)
     var failed = 0
+    var first_error = String()
     for i in range(len(refs)):
         var h = rt.get(refs[i])
         rt.release(refs[i])
         if h.error.byte_length() > 0:
             ctx.log(String(names[i], ": ", h.error))
+            if not first_error:
+                first_error = String(names[i], ": ", h.error)
             failed += 1
             continue
         var last_lines = Int64(0)
@@ -140,7 +143,10 @@ def histories(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
         _ = append(ctx, migrations_t, [batch_of([m_repo^, m_sha^, m_at^, m_kind^, m_from^, m_to^])])
     ctx.log(String(len(refs), " repositories read (", failed, " failed), ", n, " commits"))
     if failed > 0 and failed == len(refs):
-        raise Error("every repository in this run failed")
+        raise Error(
+            "every repository in this run failed (", failed, "); the first, ",
+            first_error,
+        )
     return n
 
 
