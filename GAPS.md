@@ -399,7 +399,7 @@ an hour or needs reading library source), **low** (friction).
   iceberg-mojo: a `ColumnBuilder` that appends bytes and integers without
   a `Datum` per cell.
 
-## 23. Writing a batch through iceberg-mojo peaks at ~10x the batch (medium)
+## 23. Writing a batch through iceberg-mojo peaks at ~10x the batch (medium; fixed in iceberg-mojo 0.9.0 with parquet-mojo 0.12.0)
 
 - **Happened:** one hour written as 50,000-row batches (~150 MB of
   payload each) peaks at 1.86 GB RSS in the worker; as 20,000-row
