@@ -32,7 +32,7 @@ k8s-mojo = { git = "https://github.com/magmalake/k8s.mojo.git", rev = "6cb83ce08
 memory-region-mojo = { git = "https://github.com/magmalake/memory-region.mojo.git", rev = "40068c4f95ea659e9b78aa91ced45420b07e3e6e" }
 arrow-mlake-mojo = { git = "https://github.com/magmalake/arrow-mlake.mojo.git", rev = "178aae6e0da0dbe105f9cb02632a51cfd35b9dda" }
 objectstore-mojo = { git = "https://github.com/magmalake/objectstore.mojo.git", rev = "ff66975c095f392695facc1b6dd56823dec914bc" }
-dista-mojo = { git = "https://github.com/magmalake/dista.mojo.git", rev = "27e6e88df1b79fdc424314386a835d1d08b0db2a" }
+dista-mojo = { git = "https://github.com/magmalake/dista.mojo.git", rev = "5b2a9b18674b9bc5d7fa03fb6f72f07967f7d871" }
 postgres-mojo = { git = "https://github.com/magmalake/postgres.mojo", rev = "324b2bb61e2e80327654abecf70fd4b2defbc50d" }
 brotli-mojo = { git = "https://github.com/magmalake/brotli.mojo.git", rev = "dcbf840d22e3deaf24c587d12d28570a9a882b7f" }
 thrift-mojo = { git = "https://github.com/magmalake/thrift.mojo.git", rev = "21cdbce67d22d72e88e88a60e2f168b05b4ef9fa" }
@@ -46,6 +46,6 @@ avro-mojo = { git = "https://github.com/magmalake/avro.mojo.git", rev = "d5b26cc
 roaring-mojo = { git = "https://github.com/magmalake/roaring.mojo.git", rev = "a90a7bd30cf1c21403a29059282072e93fbeeee2" }
 hashes-mojo = { git = "https://github.com/magmalake/hashes.mojo.git", rev = "395aca597f9410bd0511df44d972f14b10a8b01d" }
 iceberg-mojo = { git = "https://github.com/magmalake/iceberg.mojo.git", rev = "ab62e59fbf3f54e86f8832c6a545c8831e99e333" }
-orca-mojo = { git = "https://github.com/magmalake/orca.mojo.git", rev = "d7a70cc64a4093821b380c81ec8f82f5a0516fa0" }
+orca-mojo = { git = "https://github.com/magmalake/orca.mojo.git", rev = "f3a97fc6a3edc5861202244cb0e6a9d2367b6e6b" }
 postgresql = ">=18.4,<19"
 git = ">=2.56.0,<3"
