@@ -12,7 +12,7 @@ repository's last commit of that month. The curves are filled from the cells
 at the end, carrying each repository's last state forward month by month.
 """
 
-from search import sort_families, version_family
+from search import sort_buckets, sort_families, version_bucket, version_family
 from versions import compare_versions, version_key
 
 comptime DAY_US = Int64(86_400_000_000)
@@ -59,6 +59,13 @@ def tool_code(tooling: String) -> UInt8:
     return TOOL_NONE
 
 
+def bucket_of(version: String) -> String:
+    """The version bucket of `version`, or `unknown` for no version."""
+    if version.byte_length() == 0:
+        return String("unknown")
+    return version_bucket(version)
+
+
 def family_of(version: String) -> String:
     """The Mojo version family of `version`, or `unknown` for no version."""
     if version.byte_length() == 0:
@@ -102,16 +109,15 @@ struct Overview(Movable):
     var new_last_month: Int
     var active: Int
     """Repositories with a commit in the last 12 months."""
+    var buckets: List[String]
+    """The version buckets (`version_bucket`) in Mojo's order: `pre-1.0`, each
+    1.x minor, then `other`, `unknown` last."""
+    var bucket_repos: List[Int]
+    var bucket_active: List[Int]
     var families: List[String]
-    """In Mojo's order, `other` after the versions, `unknown` last."""
+    """The same repos by the old families (`24.x`, `0.26.x`, `1.x`), for the JSON."""
     var family_repos: List[Int]
     var family_active: List[Int]
-    var newest_family: String
-    var newest_version: String
-    var newest_active: Int
-    """Active repositories on `newest_family`."""
-    var known_active: Int
-    """Active repositories with a Mojo version."""
     var months: List[String]
     var lines_series: List[Int64]
     var repos_series: List[Int64]
@@ -132,13 +138,12 @@ struct Overview(Movable):
         self.new_this_month = 0
         self.new_last_month = 0
         self.active = 0
+        self.buckets = List[String]()
+        self.bucket_repos = List[Int]()
+        self.bucket_active = List[Int]()
         self.families = List[String]()
         self.family_repos = List[Int]()
         self.family_active = List[Int]()
-        self.newest_family = String()
-        self.newest_version = String()
-        self.newest_active = 0
-        self.known_active = 0
         self.months = List[String]()
         self.lines_series = List[Int64]()
         self.repos_series = List[Int64]()
@@ -224,10 +229,6 @@ struct Builder(Movable):
         var o = Overview()
         o.repos = repos
         var now_month = month_of_days(self.now_days)
-        var fam_index = Dict[String, Int]()
-        var oldest = List[String]()
-        var best = String()  # newest released version among active repos
-        var best_any = String()
         for ref a in self.accs:
             if a.commits == 0:
                 continue
@@ -248,39 +249,21 @@ struct Builder(Movable):
             var active = a.last_at >= self.cut_active
             if active:
                 o.active += 1
-        # Families: every repository, including the ones not read (unknown).
+        # Buckets and families: every repository, including the ones not read.
+        var bg = Groups()
+        var fg = Groups()
         for ref a in self.accs:
-            var f = family_of(a.version)
-            if f not in fam_index:
-                fam_index[f] = len(o.families)
-                o.families.append(f)
-                oldest.append(a.version)
-                o.family_repos.append(0)
-                o.family_active.append(0)
-            var i = fam_index.get(f, 0)
-            o.family_repos[i] += 1
-            if len(version_key(a.version)) > 0 and compare_versions(a.version, oldest[i]) < 0:
-                oldest[i] = a.version
-            if a.commits > 0 and a.last_at >= self.cut_active:
-                o.family_active[i] += 1
-                if f != "unknown":
-                    o.known_active += 1
-                if len(version_key(a.version)) > 0:
-                    if best_any.byte_length() == 0 or compare_versions(a.version, best_any) > 0:
-                        best_any = a.version
-                    var key = version_key(a.version)
-                    if key[3] == 1 and (
-                        best.byte_length() == 0 or compare_versions(a.version, best) > 0
-                    ):
-                        best = a.version
-        _order_families(o, oldest)
-        var newest = best if best.byte_length() > 0 else best_any
-        if newest.byte_length() > 0:
-            o.newest_version = newest
-            o.newest_family = version_family(newest)
-            for i in range(len(o.families)):
-                if o.families[i] == o.newest_family:
-                    o.newest_active = o.family_active[i]
+            var is_active = a.commits > 0 and a.last_at >= self.cut_active
+            bg.add(bucket_of(a.version), a.version, is_active)
+            fg.add(family_of(a.version), a.version, is_active)
+        _order(bg, True)
+        _order(fg, False)
+        o.buckets = bg.names.copy()
+        o.bucket_repos = bg.repos.copy()
+        o.bucket_active = bg.active.copy()
+        o.families = fg.names.copy()
+        o.family_repos = fg.repos.copy()
+        o.family_active = fg.active.copy()
         # The curves, from the first month with a commit.
         var m = self.months
         var lines = List[Int64](length=m, fill=0)
@@ -324,60 +307,88 @@ struct Builder(Movable):
         return o^
 
 
-def _order_families(mut o: Overview, oldest: List[String]):
-    """`o.families` in Mojo's order: the versions oldest first, then `other`,
-    then `unknown`; the counts follow."""
+struct Groups(Copyable, Movable):
+    """Repositories counted per group (bucket or family) of their version."""
+
+    var names: List[String]
+    var repos: List[Int]
+    var active: List[Int]
+    var oldest: List[String]
+    var index: Dict[String, Int]
+
+    def __init__(out self):
+        self.names = List[String]()
+        self.repos = List[Int]()
+        self.active = List[Int]()
+        self.oldest = List[String]()
+        self.index = Dict[String, Int]()
+
+    def add(mut self, name: String, version: String, active: Bool):
+        if name not in self.index:
+            self.index[name] = len(self.names)
+            self.names.append(name)
+            self.repos.append(0)
+            self.active.append(0)
+            self.oldest.append(version)
+        var i = self.index.get(name, 0)
+        self.repos[i] += 1
+        if active:
+            self.active[i] += 1
+        if len(version_key(version)) > 0 and compare_versions(version, self.oldest[i]) < 0:
+            self.oldest[i] = version
+
+
+def _order(mut g: Groups, buckets: Bool):
+    """`g` in Mojo's order: the versions oldest first, then `other`, then
+    `unknown`; the counts follow."""
     var names = List[String]()
     var old = List[String]()
-    var repos = List[Int]()
-    var active = List[Int]()
     var unknown = -1
-    for i in range(len(o.families)):
-        if o.families[i] == "unknown":
+    for i in range(len(g.names)):
+        if g.names[i] == "unknown":
             unknown = i
             continue
-        names.append(o.families[i])
-        old.append(oldest[i])
-        repos.append(o.family_repos[i])
-        active.append(o.family_active[i])
-    var sorted_names = names.copy()
-    var sorted_old = old.copy()
-    sort_families(sorted_names, sorted_old)
-    var out_names = List[String]()
-    var out_repos = List[Int]()
-    var out_active = List[Int]()
-    for f in sorted_names:
-        for i in range(len(names)):
-            if names[i] == f:
-                out_names.append(names[i])
-                out_repos.append(repos[i])
-                out_active.append(active[i])
-                break
+        names.append(g.names[i])
+        old.append(g.oldest[i])
+    if buckets:
+        sort_buckets(names, old)
+    else:
+        sort_families(names, old)
+    var out = Groups()
+    for f in names:
+        var i = g.index.get(f, 0)
+        out.names.append(f)
+        out.repos.append(g.repos[i])
+        out.active.append(g.active[i])
     if unknown >= 0:
-        out_names.append(String("unknown"))
-        out_repos.append(o.family_repos[unknown])
-        out_active.append(o.family_active[unknown])
-    o.families = out_names^
-    o.family_repos = out_repos^
-    o.family_active = out_active^
+        out.names.append(String("unknown"))
+        out.repos.append(g.repos[unknown])
+        out.active.append(g.active[unknown])
+    g = out^
 
 
-def family_color(family: String) -> String:
-    """The CSS colour of a version family, the same on every chart: the five
-    families Mojo has had, `other` and `unknown` in greys."""
-    if family == "24.x":
+def bucket_color(bucket: String) -> String:
+    """The CSS colour of a version bucket, the same on every chart: `pre-1.0`
+    blue, the 1.x minors cycle through eight more colours by minor number
+    (1.0 ember, 1.1 green, 1.2 purple, 1.3 amber, 1.4 ...), `other` and
+    `unknown` in greys."""
+    if bucket == "pre-1.0":
         return String("var(--c0)")
-    if family == "25.x":
-        return String("var(--c1)")
-    if family == "0.25.x":
-        return String("var(--c2)")
-    if family == "0.26.x":
-        return String("var(--c3)")
-    if family == "1.x":
-        return String("var(--c4)")
-    if family == "unknown":
+    if bucket == "unknown":
         return String("var(--border-strong)")
-    return String("var(--c5)")
+    if bucket == "other":
+        return String("var(--c5)")
+    var dot = bucket.find(".")
+    if dot < 0:
+        return String("var(--c5)")
+    try:
+        var major = Int(String(bucket[byte=:dot]))
+        var minor = Int(String(bucket[byte = dot + 1 :]))
+        var slot = (minor + (major - 1) * 3) % 8
+        # c1..c4 then c6..c9 (c5 is the grey of `other`).
+        return String("var(--c", slot + 1 if slot < 4 else slot + 2, ")")
+    except:
+        return String("var(--c5)")
 
 
 def top_gains(gains: List[Int64], n: Int) -> List[Int]:

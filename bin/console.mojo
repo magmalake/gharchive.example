@@ -13,7 +13,8 @@ or description, `/migrations` the migrations to each Mojo version over time,
 The repos and the overview are computed once and kept (`Cache`): the
 tables' current snapshots are looked at most every five minutes, and
 everything is read again only when one of them moved or the day changed.
-The per-repo pages still scan their own rows.
+The per-repo data (commits, migrations, releases, activity) and the
+Migrations page are read and rendered at the same time.
 
 The look follows mlake.dev: its warm-ash neutrals, ember accent and lake
 links, on the system font stack (no external fonts or scripts).
@@ -41,12 +42,17 @@ from orca.civil import now
 from charts import compact, donut, line_chart
 from jscan import micros_to_iso
 from listing import (
+    NEW_30D,
+    NEW_LAST_MONTH,
+    NEW_MONTH,
     ListQuery,
     list_url,
+    new_bit,
     parse_list_query,
     select_repos,
     sorted_by,
     with_active,
+    with_new,
     with_version,
 )
 from model import (
@@ -57,28 +63,28 @@ from model import (
     Release,
     Sources,
     VersionMonth,
-    activity_by_month,
+    activity_all,
     activity_months,
     day,
-    history,
+    histories,
     libraries,
     migrations,
     read_days,
     read_sources,
-    releases,
+    releases_all,
     star_gains,
-    versions_by_month,
+    versions_of,
 )
 from days import day_text
-from overview import ACTIVE_DAYS, Builder, Overview, family_color, family_of, top_gains
-from search import search_score, sort_families, url_decode, version_family
+from overview import ACTIVE_DAYS, Builder, Overview, bucket_color, bucket_of, family_of, month_of_days, top_gains
+from search import search_score, sort_buckets, url_decode, version_bucket, version_family
 from versions import sort_versions
 
 comptime STYLE = """
 .prose{max-width:72ch}.prose p,.prose li{line-height:1.6}.prose ul{padding-left:1.2em}.prose li{margin:6px 0}
 *{box-sizing:border-box}
-:root{color-scheme:light;--bg:#fbf9f7;--bg-alt:#f4f0ec;--surface:#fff;--surface-2:#f8f5f2;--border:#e3dcd4;--border-strong:#cfc5ba;--text:#17151a;--muted:#6b645d;--faint:#948c84;--ember:#c33c10;--ember-wash:#fdefe7;--lake:#0d6a70;--c0:#2b6cb0;--c1:#c33c10;--c2:#0d8a5a;--c3:#8e44ad;--c4:#a16207;--c5:#5b6770;--shadow:0 1px 2px rgb(23 21 26 / .04),0 8px 24px -12px rgb(23 21 26 / .12);--radius:10px;--radius-sm:6px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#0e0d11;--bg-alt:#131218;--surface:#17161d;--surface-2:#1c1b23;--border:#2a2833;--border-strong:#3d3a48;--text:#eeeae4;--muted:#a49d95;--faint:#7b746d;--ember:#ff7a45;--ember-wash:#2a1710;--lake:#4ecdc4;--c0:#6aa9ff;--c1:#ff7a45;--c2:#4ecdc4;--c3:#c39bf0;--c4:#e3b341;--c5:#a9b4bd;--shadow:0 1px 2px rgb(0 0 0 / .4),0 8px 24px -12px rgb(0 0 0 / .6)}}
+:root{color-scheme:light;--bg:#fbf9f7;--bg-alt:#f4f0ec;--surface:#fff;--surface-2:#f8f5f2;--border:#e3dcd4;--border-strong:#cfc5ba;--text:#17151a;--muted:#6b645d;--faint:#948c84;--ember:#c33c10;--ember-wash:#fdefe7;--lake:#0d6a70;--c0:#2b6cb0;--c1:#c33c10;--c2:#0d8a5a;--c3:#8e44ad;--c4:#a16207;--c5:#5b6770;--c6:#0e7490;--c7:#be185d;--c8:#4d7c0f;--c9:#0369a1;--shadow:0 1px 2px rgb(23 21 26 / .04),0 8px 24px -12px rgb(23 21 26 / .12);--radius:10px;--radius-sm:6px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#0e0d11;--bg-alt:#131218;--surface:#17161d;--surface-2:#1c1b23;--border:#2a2833;--border-strong:#3d3a48;--text:#eeeae4;--muted:#a49d95;--faint:#7b746d;--ember:#ff7a45;--ember-wash:#2a1710;--lake:#4ecdc4;--c0:#6aa9ff;--c1:#ff7a45;--c2:#4ecdc4;--c3:#c39bf0;--c4:#e3b341;--c5:#a9b4bd;--c6:#5ad1e6;--c7:#f472b6;--c8:#a3d95f;--c9:#7dd3fc;--shadow:0 1px 2px rgb(0 0 0 / .4),0 8px 24px -12px rgb(0 0 0 / .6)}}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;flex-direction:column}
 a{color:var(--lake);text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:.18em}
@@ -158,7 +164,7 @@ a.chip:hover{color:var(--text);border-color:var(--border-strong);text-decoration
 a.kpi:hover{border-color:var(--border-strong);text-decoration:none}
 .kpi b{display:block;color:var(--faint);font:500 11.5px/1.5 var(--mono);letter-spacing:.08em;text-transform:uppercase}
 .kpi span{display:block;font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em;line-height:1.2;margin-top:2px}
-.kpi small{display:block;color:var(--muted);font-size:12.5px}
+.kpi small{display:block;color:var(--muted);font-size:12.5px}.kpi span a{color:inherit}.kpi small a{color:var(--lake)}
 .kpi .up{color:var(--c2)}.kpi .down{color:var(--ember)}
 .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:16px}
 .card h3{margin:0 0 4px;font-size:15px;font-weight:600}
@@ -328,6 +334,24 @@ def _chips(topics: List[String], limit: Int = 6) -> String:
 comptime RECHECK_SECS = 300
 """How often the tables' current snapshots are looked at."""
 comptime RISING_SHOWN = 10
+comptime ACTIVE_SHOWN = 10
+
+
+struct RepoData(Copyable, Movable):
+    """What a repo's page lists, read with every other repo's when the cache
+    is built."""
+
+    var pts: List[Point]
+    """Its commits, oldest first."""
+    var ms: List[Migration]
+    var rels: List[Release]
+    var acts: List[MonthActivity]
+
+    def __init__(out self):
+        self.pts = List[Point]()
+        self.ms = List[Migration]()
+        self.rels = List[Release]()
+        self.acts = List[MonthActivity]()
 
 
 struct Cache(Movable):
@@ -342,10 +366,28 @@ struct Cache(Movable):
     var lines: List[Int64]
     var files: List[Int64]
     var stars: List[Int64]
+    var buckets: List[String]
+    """`bucket_of` each repo's current Mojo version."""
     var families: List[String]
-    """`family_of` each repo's current Mojo version."""
+    """`family_of` each repo's current Mojo version (old `?version=` links)."""
+    var news: List[Int]
+    """Bits of `listing.new_bit` for when each repo's first Mojo commit was."""
     var active: List[Bool]
     var ov: Overview
+    var details: Dict[String, RepoData]
+    """Per repo: the lists its page shows, all read at once at each build."""
+    var loaded: List[String]
+    """The months of GH Archive in mojo.activity."""
+    var version_rows: List[VersionMonth]
+    var migrations_body: String
+    """The Migrations page's HTML, rendered at each build."""
+    var commits30: List[Int64]
+    """Commits in the last 30 days, per repo."""
+    var active_repos: List[String]
+    """The `ACTIVE_SHOWN` repos with the most commits in the last 30 days."""
+    var active_commits: List[Int64]
+    var active_lines: List[Int64]
+    """Their net change in lines of Mojo over the 30 days."""
     var rising: List[String]
     var rising_gain: List[Int64]
     var rising_stars: List[Int64]
@@ -360,9 +402,19 @@ struct Cache(Movable):
         self.lines = List[Int64]()
         self.files = List[Int64]()
         self.stars = List[Int64]()
+        self.buckets = List[String]()
         self.families = List[String]()
+        self.news = List[Int]()
         self.active = List[Bool]()
         self.ov = Overview()
+        self.details = Dict[String, RepoData]()
+        self.loaded = List[String]()
+        self.version_rows = List[VersionMonth]()
+        self.migrations_body = String()
+        self.commits30 = List[Int64]()
+        self.active_repos = List[String]()
+        self.active_commits = List[Int64]()
+        self.active_lines = List[Int64]()
         self.rising = List[String]()
         self.rising_gain = List[Int64]()
         self.rising_stars = List[Int64]()
@@ -401,19 +453,40 @@ struct Cache(Movable):
         var b = Builder(today)
         var libs = libraries(b)
         var ov = b.finish(len(libs))
+        var commits30 = List[Int64]()
+        var lines_delta = List[Int64]()
+        for ref a in b.accs:
+            commits30.append(Int64(a.commits30))
+            lines_delta.append(a.last_lines - (a.cut_lines if a.cut_seq >= 0 else 0))
         var gains = star_gains(today - 30)
         var cutoff = Int64(today - ACTIVE_DAYS) * 86_400_000_000
         var lines = List[Int64]()
         var files = List[Int64]()
         var stars = List[Int64]()
+        var buckets = List[String]()
         var families = List[String]()
+        var news = List[Int]()
+        var now_month = month_of_days(today)
+        var cut30 = Int64(today - 30) * 86_400_000_000
         var active = List[Bool]()
         var gain_list = List[Int64]()
         for ref l in libs:
             lines.append(l.mojo_lines)
             files.append(l.mojo_files)
             stars.append(l.stars)
+            buckets.append(bucket_of(l.mojo_version))
             families.append(family_of(l.mojo_version))
+            # As the Overview counts new repos: by the first Mojo commit.
+            var bits = 0
+            if l.commits > 0:
+                var fm = month_of_days(Int(l.first_commit // 86_400_000_000))
+                if fm == now_month:
+                    bits |= NEW_MONTH
+                elif fm == now_month - 1:
+                    bits |= NEW_LAST_MONTH
+                if l.first_commit > cut30:
+                    bits |= NEW_30D
+            news.append(bits)
             active.append(l.commits > 0 and l.last_commit >= cutoff)
             gain_list.append(gains.get(l.repo, Int64(0)))
         self.rising = List[String]()
@@ -423,16 +496,51 @@ struct Cache(Movable):
             self.rising.append(libs[i].repo)
             self.rising_gain.append(gain_list[i])
             self.rising_stars.append(libs[i].stars)
+        var details = Dict[String, RepoData]()
+        for e in histories().items():
+            details[e.key] = RepoData()
+            details[e.key].pts = e.value.copy()
+        var all_ms = migrations()
+        var rows = versions_of(all_ms)
+        for ref m in all_ms:
+            if m.repo not in details:
+                details[m.repo] = RepoData()
+            details[m.repo].ms.append(m.copy())
+        for e in releases_all().items():
+            if e.key not in details:
+                details[e.key] = RepoData()
+            details[e.key].rels = e.value.copy()
+        for e in activity_all().items():
+            if e.key not in details:
+                details[e.key] = RepoData()
+            details[e.key].acts = e.value.copy()
+        self.loaded = activity_months()
+        self.migrations_body = _migrations_body(rows) if len(rows) > 0 else String()
+        self.version_rows = rows^
+        self.details = details^
+        self.commits30 = commits30.copy()
+        self.active_repos = List[String]()
+        self.active_commits = List[Int64]()
+        self.active_lines = List[Int64]()
+        for i in top_gains(commits30, ACTIVE_SHOWN):
+            self.active_repos.append(libs[i].repo)
+            self.active_commits.append(commits30[i])
+            self.active_lines.append(lines_delta[i])
         self.ov = ov^
         self.lines = lines^
         self.files = files^
         self.stars = stars^
+        self.buckets = buckets^
         self.families = families^
+        self.news = news^
         self.active = active^
         self.libs = libs^
         self.sources = src^
         self.built_day = today
         self.ready = True
+
+    def data(self, repo: String) -> RepoData:
+        return self.details.get(repo, RepoData())
 
     def find(self, repo: String) -> Optional[Library]:
         for ref l in self.libs:
@@ -458,13 +566,17 @@ def _th(label: String, key: String, q: ListQuery, sortable: Bool, num: Bool = Tr
     )
 
 
-def _libs_table(libs: List[Library], idx: List[Int], today: Int, q: ListQuery, sortable: Bool) -> String:
+def _libs_table(
+    libs: List[Library], idx: List[Int], today: Int, q: ListQuery, sortable: Bool,
+    c30: List[Int64] = List[Int64](),
+) -> String:
     """The Repos table: the repos `idx` of `libs`, in that order. The Repos
     page sorts it by its column headers; search results are in rank order."""
     var h = String(
         "<div class=tbl><table><thead><tr><th>Repository</th>",
         _th("Lines of Mojo", "lines", q, sortable), _th("Files", "files", q, sortable),
-        "<th class=num>Commits</th><th>Age</th><th>Created</th>",
+        "<th class=num>Commits</th>", _th("Commits, 30 days", "commits30", q, sortable) if len(c30) > 0 else String(),
+        "<th>Age</th><th>Created</th>",
         "<th>Mojo version</th><th>Tooling</th>", _th("Stars", "stars", q, sortable),
         "</tr></thead><tbody>",
     )
@@ -474,7 +586,8 @@ def _libs_table(libs: List[Library], idx: List[Int], today: Int, q: ListQuery, s
         h.write(
             "<tr><td><a class=repo href='/repos/", html_escape(l.repo), "'>", html_escape(l.repo),
             "</a>", _chips(l.topics), "</td><td class=num>", lines, "</td><td class=num>",
-            _n(l.mojo_files), "</td><td class=num>", l.commits, "</td><td>",
+            _n(l.mojo_files), "</td><td class=num>", l.commits, "</td>",
+            String("<td class=num>", c30[i], "</td>") if len(c30) > 0 else String(), "<td>",
             _age(l.created_at, today), "</td><td>", day(l.created_at),
             "</td><td class='mono soft'>", _or_dash(l.mojo_version), "</td><td>",
             _or_dash(l.tooling), "</td><td class=num>", _n(l.stars), "</td></tr>",
@@ -487,6 +600,7 @@ def _list_query(req: Request) -> ListQuery:
     return parse_list_query(
         req.query_param("sort"), req.query_param("dir"),
         url_decode(req.query_param("version")), req.query_param("active"),
+        req.query_param("new"),
     )
 
 
@@ -511,14 +625,16 @@ def _filter_options(q: ListQuery, c: Cache) -> String:
     for i in range(len(c.libs)):
         if q.active and not c.active[i]:
             continue
-        per[c.families[i]] = per.get(c.families[i], 0) + 1
+        if q.new.byte_length() > 0 and c.news[i] & new_bit(q.new) == 0:
+            continue
+        per[c.buckets[i]] = per.get(c.buckets[i], 0) + 1
         total += 1
     var h = String("<div class=filters><span class=label>Mojo version</span>")
     h.write(
         "<a class='chip", " on" if q.version.byte_length() == 0 else "", "' href='",
         html_escape(list_url(with_version(q, String()))), "'>any (", total, ")</a>",
     )
-    for ref f in c.ov.families:
+    for ref f in c.ov.buckets:
         var n = per.get(f, 0)
         if n == 0 and q.version != f:
             continue
@@ -531,8 +647,17 @@ def _filter_options(q: ListQuery, c: Cache) -> String:
         "<a class='chip", " on" if not q.active else "", "' href='",
         html_escape(list_url(with_active(q, False))), "'>any</a>",
         "<a class='chip", " on" if q.active else "", "' href='",
-        html_escape(list_url(with_active(q, True))), "'>active in the last year</a></div>",
+        html_escape(list_url(with_active(q, True))), "'>active in the last year</a>",
     )
+    h.write("<span class=label>First commit</span>")
+    var news: List[String] = ["", "month", "last-month", "30d"]
+    var titles: List[String] = ["any", "this month", "last month", "last 30 days"]
+    for k in range(4):
+        h.write(
+            "<a class='chip", " on" if q.new == news[k] else "", "' href='",
+            html_escape(list_url(with_new(q, news[k]))), "'>", titles[k], "</a>",
+        )
+    h.write("</div>")
     return h^
 
 
@@ -552,6 +677,16 @@ def _filter_chips(q: ListQuery) -> String:
             "<a class='chip on' href='", html_escape(list_url(with_active(q, False))),
             "' aria-label='Remove the activity filter'>active in the last year &times;</a>",
         )
+    if q.new.byte_length() > 0:
+        var what = String("new this month")
+        if q.new == "last-month":
+            what = String("new last month")
+        elif q.new == "30d":
+            what = String("new in the last 30 days")
+        h.write(
+            "<a class='chip on' href='", html_escape(list_url(with_new(q, String()))),
+            "' aria-label='Remove the new repos filter'>", what, " &times;</a>",
+        )
     h.write("</div>")
     return h^
 
@@ -560,7 +695,7 @@ def repos_page(req: Request, mut c: Cache) raises -> Response:
     try:
         c.refresh()
         var q = _list_query(req)
-        var idx = select_repos(q, c.lines, c.files, c.stars, c.families, c.active)
+        var idx = select_repos(q, c.lines, c.files, c.stars, c.buckets, c.active, c.families, c.news, c.commits30)
         var h = String(
             "<h1>Mojo repos</h1><p class=sub>Mojo repos, versions and growth, counted",
             " from GH Archive by magmalake. Not affiliated with Modular.</p>",
@@ -585,7 +720,7 @@ def repos_page(req: Request, mut c: Cache) raises -> Response:
         if len(idx) == 0:
             h.write(_empty("No repos match", "No repo has all of these filters. Remove one with the chips above."))
         else:
-            h.write(_libs_table(c.libs, idx, _now_days(), q, True))
+            h.write(_libs_table(c.libs, idx, _now_days(), q, True, c.commits30))
         return _page("Repos", h^, "repos")
     except e:
         return internal_error(String(e))
@@ -619,7 +754,7 @@ def _pct(part: Int, whole: Int) -> String:
 
 
 def _family_url(f: String, active: Bool) -> String:
-    return list_url(ListQuery(String("lines"), False, f, active))
+    return list_url(ListQuery(String("lines"), False, f, active, String()))
 
 
 def _family_donut(c: Cache, active: Bool) -> String:
@@ -632,17 +767,17 @@ def _family_donut(c: Cache, active: Bool) -> String:
     var colors = List[String]()
     var hrefs = List[String]()
     var total = 0
-    for i in range(len(ov.families)):
-        var n = ov.family_active[i] if active else ov.family_repos[i]
+    for i in range(len(ov.buckets)):
+        var n = ov.bucket_active[i] if active else ov.bucket_repos[i]
         total += n
-        labels.append(ov.families[i])
+        labels.append(ov.buckets[i])
         values.append(n)
-        colors.append(family_color(ov.families[i]))
-        hrefs.append(_family_url(ov.families[i], active))
+        colors.append(bucket_color(ov.buckets[i]))
+        hrefs.append(_family_url(ov.buckets[i], active))
     var what = String("active in the last year") if active else String("all")
     var svg = donut(
         labels, values, colors, hrefs, String(total), String("repos"),
-        String("Donut chart: ", total, " repos (", what, ") by Mojo version family"),
+        String("Donut chart: ", total, " repos (", what, ") by Mojo version"),
     )
     var legend = String("<ul class=legend>")
     for i in range(len(labels)):
@@ -706,6 +841,7 @@ def overview(req: Request, mut c: Cache) raises -> Response:
         or req.query_param("dir").byte_length() > 0
         or req.query_param("version").byte_length() > 0
         or req.query_param("active").byte_length() > 0
+        or req.query_param("new").byte_length() > 0
     ):
         # The Repos table used to be the home page: keep its links working.
         return redirect(String("/repos?", _raw_query(req)), 301)
@@ -730,9 +866,11 @@ def overview(req: Request, mut c: Cache) raises -> Response:
         h.write(
             "<div class=kpis>",
             _kpi(
-                "Repos", _n(Int64(ov.repos)),
-                String(_signed(Int64(ov.with_history - ov.repos_30_ago)), " in 30 days"),
-                String("/repos"),
+                "Repos", String("<a href='/repos'>", _n(Int64(ov.repos)), "</a>"),
+                String(
+                    "<a href='", html_escape(list_url(with_new(ListQuery(String("lines"), False, String(), False, String()), String("30d")))), "'>",
+                    _signed(Int64(ov.with_history - ov.repos_30_ago)), " in 30 days</a>",
+                ),
             ),
             _kpi(
                 "Commits", _n(Int64(ov.commits)),
@@ -741,7 +879,7 @@ def overview(req: Request, mut c: Cache) raises -> Response:
             _kpi(
                 "Lines of Mojo", compact(ov.lines),
                 String(_signed(ov.lines - ov.lines_30_ago), " in 30 days"),
-                list_url(ListQuery(String("lines"), False, String(), False)),
+                list_url(ListQuery(String("lines"), False, String(), False, String())),
             ),
             _kpi(
                 "Active repos", _n(Int64(ov.active)),
@@ -753,8 +891,12 @@ def overview(req: Request, mut c: Cache) raises -> Response:
                 String(_signed(Int64(dc)), " vs the 30 days before"),
             ),
             _kpi(
-                "New repos this month", _n(Int64(ov.new_this_month)),
-                String(ov.new_last_month, " last month (first Mojo commit)"),
+                "New repos this month",
+                String("<a href='/repos?new=month'>", _n(Int64(ov.new_this_month)), "</a>"),
+                String(
+                    "<a href='/repos?new=last-month'>", ov.new_last_month,
+                    " last month</a> (first Mojo commit)",
+                ),
             ),
             "</div>",
         )
@@ -764,19 +906,6 @@ def overview(req: Request, mut c: Cache) raises -> Response:
             " names; <em>unknown</em> when it has none. Click a slice for its repos.</p>",
             "<div class=cols>", _family_donut(c, False), _family_donut(c, True), "</div>",
         )
-        # Adoption of the newest release.
-        if ov.known_active > 0 and ov.newest_family.byte_length() > 0:
-            h.write(
-                "<h2>Adoption of the newest Mojo</h2><div class=card><p class=big-stat>",
-                _pct(ov.newest_active, ov.known_active), " of active repos are on ",
-                "<a href='", html_escape(_family_url(ov.newest_family, True)), "'>",
-                html_escape(ov.newest_family), "</a></p><p>", ov.newest_active, " of the ",
-                ov.known_active, " repos with a commit in the last year and a known Mojo version.",
-                " The newest release any of them uses is ", html_escape(ov.newest_version), ".</p>",
-                "<p class=mute>How fast repos move after a release is not shown: the census has no",
-                " release dates for Mojo itself, and the first repo to lock a version is often a",
-                " nightly user, so the days to adoption would be misleading.</p></div>",
-            )
         # Growth.
         if len(ov.months) >= 2:
             var m = ov.months.copy()
@@ -829,11 +958,15 @@ def overview(req: Request, mut c: Cache) raises -> Response:
                 ),
                 "</div>",
             )
-        # Rising.
+        # Rising and the most active repos, side by side.
+        h.write("<div class=cols><div>")
+        h.write(
+            "<h2>Rising</h2><p class=sub>The repos that gained the most stars in the last 30 days,",
+            " counted from GH Archive's WatchEvents on the days loaded so far.</p>",
+        )
         if len(c.rising) > 0:
             h.write(
-                "<h2>Rising</h2><p class=sub>The repos that gained the most stars in the last 30 days,",
-                " counted from GH Archive's WatchEvents on the days loaded so far.</p><div class=tbl><table><thead><tr>",
+                "<div class=tbl><table><thead><tr>",
                 "<th>Repository</th><th class=num>Stars, 30 days</th><th class=num>Stars</th></tr></thead><tbody>",
             )
             for i in range(len(c.rising)):
@@ -843,6 +976,25 @@ def overview(req: Request, mut c: Cache) raises -> Response:
                     "</td><td class=num>", _n(c.rising_stars[i]), "</td></tr>",
                 )
             h.write("</tbody></table></div>")
+        h.write(
+            "</div><div><h2><a href='",
+            html_escape(list_url(ListQuery(String("commits30"), False, String(), False, String()))),
+            "'>Most active</a></h2><p class=sub>The repos with the most commits in the last 30 days,",
+            " and how many lines of Mojo they grew by.</p>",
+        )
+        if len(c.active_repos) > 0:
+            h.write(
+                "<div class=tbl><table><thead><tr><th>Repository</th><th class=num>Commits, 30 days</th>",
+                "<th class=num>Lines of Mojo</th></tr></thead><tbody>",
+            )
+            for i in range(len(c.active_repos)):
+                h.write(
+                    "<tr><td><a class=repo href='/repos/", html_escape(c.active_repos[i]), "'>",
+                    html_escape(c.active_repos[i]), "</a></td><td class=num>", _n(c.active_commits[i]),
+                    "</td><td class=num>", _signed(c.active_lines[i]), "</td></tr>",
+                )
+            h.write("</tbody></table></div>")
+        h.write("</div></div>")
         # As of.
         h.write(
             "<p class=asof>Data as of ", _as_of(c.sources.as_of_ms), " (the latest snapshot of the tables",
@@ -873,8 +1025,16 @@ def overview_json(req: Request, mut c: Cache) raises -> Response:
             ',"commits_prev_30d":', ov.commits_prev_30, ',"mojo_lines":', ov.lines,
             ',"mojo_lines_30d_ago":', ov.lines_30_ago, ',"new_repos_this_month":', ov.new_this_month,
             ',"new_repos_last_month":', ov.new_last_month, ',"active_repos":', ov.active,
-            ',"families":[',
+            ',"buckets":[',
         )
+        for i in range(len(ov.buckets)):
+            if i > 0:
+                out += ","
+            out.write(
+                '{"bucket":', _q(ov.buckets[i]), ',"repos":', ov.bucket_repos[i],
+                ',"active_repos":', ov.bucket_active[i], "}",
+            )
+        out += '],"families":['
         for i in range(len(ov.families)):
             if i > 0:
                 out += ","
@@ -883,9 +1043,7 @@ def overview_json(req: Request, mut c: Cache) raises -> Response:
                 ',"active_repos":', ov.family_active[i], "}",
             )
         out.write(
-            '],"newest":{"family":', _q(ov.newest_family), ',"version":', _q(ov.newest_version),
-            ',"active_repos":', ov.newest_active, ',"active_repos_with_version":', ov.known_active,
-            '},"months":[',
+            '],"months":[',
         )
         for k in range(len(ov.months)):
             if k > 0:
@@ -903,6 +1061,14 @@ def overview_json(req: Request, mut c: Cache) raises -> Response:
             out.write(
                 '{"repo":', _q(c.rising[i]), ',"stars_30d":', c.rising_gain[i],
                 ',"stars":', c.rising_stars[i], "}",
+            )
+        out += '],"most_active":['
+        for i in range(len(c.active_repos)):
+            if i > 0:
+                out += ","
+            out.write(
+                '{"repo":', _q(c.active_repos[i]), ',"commits_30d":', c.active_commits[i],
+                ',"mojo_lines_30d":', c.active_lines[i], "}",
             )
         out += "]}"
         return ok_json(out)
@@ -1029,33 +1195,21 @@ def _next_month(m: String) raises -> String:
     return String(y, "-", "0" if mo < 9 else "", mo + 1)
 
 
-def _series_key(v: String, by_family: Bool) -> String:
-    return version_family(v) if by_family else v
-
-
 def _versions_chart(rows: List[VersionMonth]) raises -> String:
-    """Repos migrating each month as one line per Mojo version family (or
-    per version when there are at most six), as inline SVG with a legend."""
-    var versions = List[String]()
-    for ref r in rows:
-        if r.version not in versions:
-            versions.append(r.version)
-    sort_versions(versions)
-    var by_family = len(versions) > 6
+    """Repos migrating each month as one line per Mojo version bucket
+    (`pre-1.0`, then each 1.x minor), as inline SVG with a legend."""
     var names = List[String]()
     var oldest = List[String]()
-    for ref v in versions:
-        var k = _series_key(v, by_family)
+    for ref r in rows:
+        var k = version_bucket(r.version)
         if k not in names:
             names.append(k)
-            oldest.append(v)
-    if by_family:
-        sort_families(names, oldest)
-    # Families keep their colour across the site (the overview's donuts too).
-    var family_colors = List[String]()
-    if by_family:
-        for ref f in names:
-            family_colors.append(family_color(f))
+            oldest.append(r.version)
+    sort_buckets(names, oldest)
+    # Buckets keep their colour across the site (the overview's donuts too).
+    var colors = List[String]()
+    for ref f in names:
+        colors.append(bucket_color(f))
     var months = List[String]()
     var m = rows[0].month
     var last = rows[len(rows) - 1].month
@@ -1066,20 +1220,19 @@ def _versions_chart(rows: List[VersionMonth]) raises -> String:
     var counts = Dict[String, Int]()
     var top = 1
     for ref r in rows:
-        var k = String(_series_key(r.version, by_family), "|", r.month)
+        var k = String(version_bucket(r.version), "|", r.month)
         var c = counts.get(k, 0) + r.repos
         counts[k] = c
         if c > top:
             top = c
     return _line_chart(
         months, names, counts, top,
-        String("Line chart: repos migrating to each Mojo version family"),
+        String("Line chart: repos migrating to each Mojo version"),
         String(
-            "Repos migrating to each Mojo ", "version family" if by_family else "version",
-            " per month, ", months[0], " to ", last,
+            "Repos migrating to each Mojo version per month, ", months[0], " to ", last,
         ),
         String("Repos per month; a repo that moved twice in a month counts for each version."),
-        family_colors,
+        colors,
     )
 
 
@@ -1151,17 +1304,57 @@ def _line_chart(
     )
 
 
-def migrations_page(req: Request) raises -> Response:
+def _migrations_body(rows: List[VersionMonth]) raises -> String:
+    """The Migrations page's HTML for `rows` (at least one), rendered once
+    per cache build."""
+    var h = String(
+        "<h1>Mojo version migrations</h1><p class=lead>A migration is a repo's lock",
+        " file (or its manifest, when there's no lock) moving to a Mojo version between",
+        " two of its commits. Each number is the repos whose lock file moved to that",
+        " version that month. Versions are in Mojo's own order across the renumbering:",
+        " pre-1.0 (24.x to 0.26.x, one line), then each 1.x minor.</p>",
+    )
+    h.write(_versions_chart(rows))
+    # The month cell spans its rows; the bar is against the busiest row.
+    var per_month = Dict[String, Int]()
+    var top = 1
+    for ref r in rows:
+        per_month[r.month] = per_month.get(r.month, 0) + 1
+        if r.repos > top:
+            top = r.repos
+    h.write(
+        "<h2>By month and version</h2>",
+        "<div class=tbl><table><thead><tr><th>Month</th><th>Version</th>",
+        "<th>Repos migrating</th></tr></thead><tbody>",
+    )
+    var last_month = String()
+    for ref r in rows:
+        h.write("<tr>")
+        if r.month != last_month:
+            last_month = r.month
+            h.write(
+                "<td class=month rowspan=", per_month[r.month], ">", html_escape(r.month), "</td>"
+            )
+        h.write(
+            "<td class=mono>", html_escape(r.version), "</td><td><div class=bar><span>",
+            r.repos, "</span><i style='width:", r.repos * 100 // top,
+            "%' aria-hidden=true></i></div></td></tr>",
+        )
+    h.write("</tbody></table></div>")
+    return h^
+
+
+def migrations_page(req: Request, mut c: Cache) raises -> Response:
     try:
-        var rows = versions_by_month()
+        c.refresh()
         var h = String(
             "<h1>Mojo version migrations</h1><p class=lead>A migration is a repo's lock",
             " file (or its manifest, when there's no lock) moving to a Mojo version between",
             " two of its commits. Each number is the repos whose lock file moved to that",
             " version that month. Versions are in Mojo's own order across the renumbering:",
-            " 24.x, 25.x, 0.25.x, 0.26.x, 1.x.</p>",
+            " pre-1.0 (24.x to 0.26.x, one line), then each 1.x minor.</p>",
         )
-        if len(rows) == 0:
+        if len(c.version_rows) == 0:
             h.write(
                 _empty(
                     "No migrations yet",
@@ -1171,47 +1364,25 @@ def migrations_page(req: Request) raises -> Response:
                 )
             )
             return _page("Migrations", h^, "migrations")
-        h.write(_versions_chart(rows))
-        # The month cell spans its rows; the bar is against the busiest row.
-        var per_month = Dict[String, Int]()
-        var top = 1
-        for ref r in rows:
-            per_month[r.month] = per_month.get(r.month, 0) + 1
-            if r.repos > top:
-                top = r.repos
-        h.write(
-            "<h2>By month and version</h2>",
-            "<div class=tbl><table><thead><tr><th>Month</th><th>Version</th>",
-            "<th>Repos migrating</th></tr></thead><tbody>",
-        )
-        var last_month = String()
-        for ref r in rows:
-            h.write("<tr>")
-            if r.month != last_month:
-                last_month = r.month
-                h.write(
-                    "<td class=month rowspan=", per_month[r.month], ">", html_escape(r.month), "</td>"
-                )
-            h.write(
-                "<td class=mono>", html_escape(r.version), "</td><td><div class=bar><span>",
-                r.repos, "</span><i style='width:", r.repos * 100 // top,
-                "%' aria-hidden=true></i></div></td></tr>",
-            )
-        h.write("</tbody></table></div>")
-        return _page("Migrations", h^, "migrations")
+        return _page("Migrations", c.migrations_body.copy(), "migrations")
     except e:
         return internal_error(String(e))
 
 
-def versions_json(req: Request) raises -> Response:
+def versions_json(req: Request, mut c: Cache) raises -> Response:
     try:
+        c.refresh()
         var out = String("[")
         var first = True
-        for ref r in versions_by_month():
+        for ref r in c.version_rows:
             if not first:
                 out += ","
             first = False
-            out.write('{"month":', _q(r.month), ',"version":', _q(r.version), ',"family":', _q(version_family(r.version)), ',"libraries":', r.repos, "}")
+            out.write(
+                '{"month":', _q(r.month), ',"version":', _q(r.version), ',"bucket":',
+                _q(version_bucket(r.version)), ',"family":', _q(version_family(r.version)),
+                ',"libraries":', r.repos, "}",
+            )
         out += "]"
         return ok_json(out)
     except e:
@@ -1289,8 +1460,9 @@ def repo_page(req: Request, mut c: Cache) raises -> Response:
         if not found:
             return not_found(req.url)
         var l = found.value().copy()
-        var pts = history(repo)
-        var ms = migrations(repo)
+        var data = c.data(repo)
+        ref pts = data.pts
+        ref ms = data.ms
         var today = _now_days()
         var gh = String("https://github.com/", html_escape(repo))
         var h = String(
@@ -1322,13 +1494,13 @@ def repo_page(req: Request, mut c: Cache) raises -> Response:
             "<h2>Lines of Mojo</h2>", _chart(pts),
             "<h2>Stars per month</h2>",
         )
-        var loaded = activity_months()
+        ref loaded = c.loaded
         if len(loaded) == 0:
             h.write(_empty("No activity yet", "The activity pipeline hasn't counted this repository's GH Archive events yet."))
         else:
-            h.write(_stars_chart(activity_by_month(repo), loaded))
+            h.write(_stars_chart(data.acts, loaded))
         h.write("<h2>Releases and tags</h2>")
-        var rels = releases(repo)
+        ref rels = data.rels
         if len(rels) == 0:
             h.write(_empty("No releases or tags", "No published release in the GH Archive days loaded, and no git tag in the clone."))
         else:
@@ -1411,9 +1583,10 @@ def repo_json(req: Request, mut c: Cache) raises -> Response:
         var found = c.find(repo)
         if not found:
             return not_found(req.url)
+        var data = c.data(repo)
         var out = String('{"library":', _lib_json(found.value()), ',"migrations":[')
         var first = True
-        for ref m in migrations(repo):
+        for ref m in data.ms:
             if not first:
                 out += ","
             first = False
@@ -1423,7 +1596,7 @@ def repo_json(req: Request, mut c: Cache) raises -> Response:
             )
         out += '],"commits":['
         first = True
-        for ref p in history(repo):
+        for ref p in data.pts:
             if not first:
                 out += ","
             first = False
@@ -1434,7 +1607,7 @@ def repo_json(req: Request, mut c: Cache) raises -> Response:
             )
         out += '],"activity":['
         first = True
-        for ref a in activity_by_month(repo):
+        for ref a in data.acts:
             if not first:
                 out += ","
             first = False
@@ -1446,7 +1619,7 @@ def repo_json(req: Request, mut c: Cache) raises -> Response:
             )
         out += '],"releases":['
         first = True
-        for ref x in releases(repo):
+        for ref x in data.rels:
             if not first:
                 out += ","
             first = False
@@ -1669,6 +1842,10 @@ struct Site(Handler, Copyable):
             return index_json(req, c)
         if self.page == 6:
             return search_json(req, c)
+        if self.page == 8:
+            return migrations_page(req, c)
+        if self.page == 9:
+            return versions_json(req, c)
         return repo_json(req, c)
 
 
@@ -1683,7 +1860,7 @@ def main() raises:
     var r = Router()
     r.get("/", Site(0, cache))
     r.get("/repos", Site(1, cache))
-    r.get("/migrations", migrations_page)
+    r.get("/migrations", Site(8, cache))
     r.get("/versions", _moved_to_migrations)
     r.get("/how", how)
     r.get("/how/optimizations", optimizations)
@@ -1691,7 +1868,7 @@ def main() raises:
     r.get("/repos/:owner/:name", Site(3, cache))
     r.get("/api/overview", Site(4, cache))
     r.get("/api/repos", Site(5, cache))
-    r.get("/api/versions", versions_json)
+    r.get("/api/versions", Site(9, cache))
     r.get("/api/search", Site(6, cache))
     r.get("/api/repos/:owner/:name", Site(7, cache))
     var addr = String("0.0.0.0:", getenv("PORT", "8080"))

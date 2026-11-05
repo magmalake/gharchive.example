@@ -242,14 +242,18 @@ def _repo_filter(repo: String) -> String:
     return String('["=","repo","', repo.replace('"', ""), '"]')
 
 
-def activity_by_month(repo: String) raises -> List[MonthActivity]:
-    """`repo`'s GH Archive activity summed by month, oldest first; only the
-    months it had events in."""
-    var out = List[MonthActivity]()
+def activity_all(repo: String = "") raises -> Dict[String, List[MonthActivity]]:
+    """GH Archive activity summed by month per repo (only `repo`'s when
+    given), oldest month first; only the months with events."""
+    var out = Dict[String, List[MonthActivity]]()
     if not exists("mojo", "activity"):
         return out^
-    var at = Dict[String, Int]()
-    for b in load("mojo", "activity").scan().filter(_repo_filter(repo)).to_batches():
+    var at = Dict[String, Int]()  # repo|month -> index in the repo's list
+    var scan = load("mojo", "activity").scan()
+    if repo.byte_length() > 0:
+        scan = scan.filter(_repo_filter(repo))
+    for b in scan.to_batches():
+        var c_repo = col(b, "repo")
         var c_day = col(b, "day")
         var c_stars = col(b, "stars")
         var c_forks = col(b, "forks")
@@ -258,11 +262,16 @@ def activity_by_month(repo: String) raises -> List[MonthActivity]:
         var c_prs = col(b, "prs_opened")
         var c_push = col(b, "pushes")
         for r in range(b.num_rows):
+            var name = str_at(b.column(c_repo), r)
             var m = String(day_text(i32_at(b.column(c_day), r))[byte=:7])
-            if m not in at:
-                at[m] = len(out)
-                out.append(MonthActivity(m, 0, 0, 0, 0, 0, 0, 0))
-            ref a = out[at[m]]
+            var key = String(name, "|", m)
+            if name not in out:
+                out[name] = List[MonthActivity]()
+            ref list = out[name]
+            if key not in at:
+                at[key] = len(list)
+                list.append(MonthActivity(m, 0, 0, 0, 0, 0, 0, 0))
+            ref a = list[at[key]]
             a.stars += i64_at(b.column(c_stars), r)
             a.forks += i64_at(b.column(c_forks), r)
             a.releases += i64_at(b.column(c_rel), r)
@@ -270,12 +279,22 @@ def activity_by_month(repo: String) raises -> List[MonthActivity]:
             a.prs_opened += i64_at(b.column(c_prs), r)
             a.pushes += i64_at(b.column(c_push), r)
             a.days_active += 1
-    for i in range(1, len(out)):
-        var j = i
-        while j > 0 and out[j - 1].month > out[j].month:
-            out.swap_elements(j - 1, j)
-            j -= 1
+    for e in out.items():
+        ref list = out[e.key]
+        for i in range(1, len(list)):
+            var j = i
+            while j > 0 and list[j - 1].month > list[j].month:
+                list.swap_elements(j - 1, j)
+                j -= 1
     return out^
+
+
+def activity_by_month(repo: String) raises -> List[MonthActivity]:
+    """`repo`'s GH Archive activity summed by month, oldest first."""
+    var all = activity_all(repo)
+    if repo in all:
+        return all.pop(repo)
+    return List[MonthActivity]()
 
 
 @fieldwise_init
@@ -292,67 +311,100 @@ struct Release(Copyable, Movable):
     var mojo_version: String
 
 
-def releases(repo: String) raises -> List[Release]:
-    """`repo`'s published releases (mojo.releases) and git tags (mojo.tags),
-    newest first; a tag that is also a release is listed once, as the
-    release, with the tag's commit and Mojo version."""
-    var out = List[Release]()
-    var by_tag = Dict[String, Int]()
+def releases_all(repo: String = "") raises -> Dict[String, List[Release]]:
+    """The published releases (mojo.releases) and git tags (mojo.tags) of
+    every repo (only `repo`'s when given), newest first; a tag that is also a
+    release is listed once, as the release, with the tag's commit and Mojo
+    version."""
+    var out = Dict[String, List[Release]]()
+    var by_tag = Dict[String, Int]()  # repo|tag -> index in the repo's list
     if exists("mojo", "releases"):
-        for b in load("mojo", "releases").scan().filter(_repo_filter(repo)).to_batches():
+        var scan = load("mojo", "releases").scan()
+        if repo.byte_length() > 0:
+            scan = scan.filter(_repo_filter(repo))
+        for b in scan.to_batches():
+            var c_repo = col(b, "repo")
             var c_tag = col(b, "tag")
             var c_name = col(b, "name")
             var c_pub = col(b, "published_at")
             var c_day = col(b, "day")
             var c_pre = col(b, "prerelease")
             for r in range(b.num_rows):
+                var name = str_at(b.column(c_repo), r)
                 var tag = str_at(b.column(c_tag), r)
-                if tag in by_tag:
+                var key = String(name, "|", tag)
+                if key in by_tag:
                     continue
                 var at = i64_at(b.column(c_pub), r)
                 if at == 0:
                     at = i32_at(b.column(c_day), r) * 86_400_000_000
-                by_tag[tag] = len(out)
-                out.append(Release(
+                if name not in out:
+                    out[name] = List[Release]()
+                ref list = out[name]
+                by_tag[key] = len(list)
+                list.append(Release(
                     tag, str_at(b.column(c_name), r), at,
                     bool_at(b.column(c_pre), r), String("release"), String(), String(),
                 ))
     if exists("mojo", "tags"):
-        for b in load("mojo", "tags").scan().filter(_repo_filter(repo)).to_batches():
+        var scan = load("mojo", "tags").scan()
+        if repo.byte_length() > 0:
+            scan = scan.filter(_repo_filter(repo))
+        for b in scan.to_batches():
+            var c_repo = col(b, "repo")
             var c_tag = col(b, "tag")
             var c_commit = col(b, "commit")
             var c_at = col(b, "tagged_at")
             var c_ver = col(b, "mojo_version")
             for r in range(b.num_rows):
+                var name = str_at(b.column(c_repo), r)
                 var tag = str_at(b.column(c_tag), r)
                 var commit = str_at(b.column(c_commit), r)
                 var ver = str_at(b.column(c_ver), r)
-                if tag in by_tag:
-                    ref x = out[by_tag[tag]]
+                var key = String(name, "|", tag)
+                if name not in out:
+                    out[name] = List[Release]()
+                ref list = out[name]
+                if key in by_tag:
+                    ref x = list[by_tag[key]]
                     x.commit = commit
                     x.mojo_version = ver
                     continue
-                by_tag[tag] = len(out)
-                out.append(Release(
+                by_tag[key] = len(list)
+                list.append(Release(
                     tag, String(), i64_at(b.column(c_at), r), False, String("tag"),
                     commit, ver,
                 ))
-    for i in range(1, len(out)):
-        var j = i
-        while j > 0 and out[j - 1].at < out[j].at:
-            out.swap_elements(j - 1, j)
-            j -= 1
+    for e in out.items():
+        ref list = out[e.key]
+        for i in range(1, len(list)):
+            var j = i
+            while j > 0 and list[j - 1].at < list[j].at:
+                list.swap_elements(j - 1, j)
+                j -= 1
     return out^
 
 
-def history(repo: String) raises -> List[Point]:
-    """One point per commit of `repo`, oldest first."""
-    var out = List[Point]()
+def releases(repo: String) raises -> List[Release]:
+    """`repo`'s releases and tags, newest first (`releases_all`)."""
+    var all = releases_all(repo)
+    if repo in all:
+        return all.pop(repo)
+    return List[Release]()
+
+
+def histories(repo: String = "") raises -> Dict[String, List[Point]]:
+    """One point per commit of every repo (only `repo`'s when given), oldest
+    first."""
+    var out = Dict[String, List[Point]]()
     if not exists("mojo", "commits"):
         return out^
-    var seqs = List[Int64]()
-    var filter = String('["=","repo","', repo.replace('"', ""), '"]')
-    for b in load("mojo", "commits").scan().filter(filter).to_batches():
+    var seqs = Dict[String, List[Int64]]()
+    var scan = load("mojo", "commits").scan()
+    if repo.byte_length() > 0:
+        scan = scan.filter(_repo_filter(repo))
+    for b in scan.select(["repo", "committed_at", "seq", "mojo_lines", "sha", "tooling", "mojo_version"]).to_batches():
+        var c_repo = col(b, "repo")
         var c_at = col(b, "committed_at")
         var c_seq = col(b, "seq")
         var c_lines = col(b, "mojo_lines")
@@ -360,8 +412,12 @@ def history(repo: String) raises -> List[Point]:
         var c_tool = col(b, "tooling")
         var c_ver = col(b, "mojo_version")
         for r in range(b.num_rows):
-            seqs.append(i64_at(b.column(c_seq), r))
-            out.append(
+            var name = str_at(b.column(c_repo), r)
+            if name not in out:
+                out[name] = List[Point]()
+                seqs[name] = List[Int64]()
+            seqs[name].append(i64_at(b.column(c_seq), r))
+            out[name].append(
                 Point(
                     i64_at(b.column(c_at), r),
                     i64_at(b.column(c_lines), r),
@@ -371,13 +427,24 @@ def history(repo: String) raises -> List[Point]:
                 )
             )
     # By seq (the scan's order is the files').
-    for i in range(1, len(out)):
-        var j = i
-        while j > 0 and seqs[j - 1] > seqs[j]:
-            seqs.swap_elements(j - 1, j)
-            out.swap_elements(j - 1, j)
-            j -= 1
+    for e in out.items():
+        ref list = out[e.key]
+        ref sq = seqs[e.key]
+        for i in range(1, len(list)):
+            var j = i
+            while j > 0 and sq[j - 1] > sq[j]:
+                sq.swap_elements(j - 1, j)
+                list.swap_elements(j - 1, j)
+                j -= 1
     return out^
+
+
+def history(repo: String) raises -> List[Point]:
+    """One point per commit of `repo`, oldest first."""
+    var all = histories(repo)
+    if repo in all:
+        return all.pop(repo)
+    return List[Point]()
 
 
 def migrations(repo: String = "") raises -> List[Migration]:
@@ -422,11 +489,15 @@ struct VersionMonth(Copyable, Movable):
 
 
 def versions_by_month() raises -> List[VersionMonth]:
+    return versions_of(migrations())
+
+
+def versions_of(ms: List[Migration]) -> List[VersionMonth]:
     """How many libraries moved to each Mojo version, by month, in version
     order within a month."""
     var counts = Dict[String, Int]()
     var seen = Dict[String, Bool]()
-    for m in migrations():
+    for ref m in ms:
         if m.kind != "mojo_version" or m.to_value.byte_length() == 0:
             continue
         var month = String(day(m.at)[byte=:7])
@@ -490,7 +561,9 @@ def read_sources() raises -> Sources:
     """The snapshots the tables are at now (metadata only) and the time of
     the newest."""
     var out = Sources()
-    var names: List[String] = ["repos", "commits", "repo_stats", "activity"]
+    var names: List[String] = [
+        "repos", "commits", "repo_stats", "activity", "migrations", "releases", "tags",
+    ]
     for name in names:
         var t = try_load("mojo", name)
         if not t or not t.value().metadata.has_current_snapshot:
