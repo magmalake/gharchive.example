@@ -1,10 +1,11 @@
-"""Committing an hour's files to the tables of a day, one snapshot a table
-and hour, and replacing the day's earlier files with the first commit.
+"""Committing files to the tables of a day, and replacing the day's earlier
+files with the first commit.
 
-gharchive and gharchive_index both write `gharchive.events`'s companions
-(`candidates`, `repo_hour`, `releases`) this way. Each table counts its own
-commits (`orca.tables.find_commit`), so a retried step finds, per table, the
-hours it already committed.
+`gharchive.events` gets a snapshot an hour (`commit_hour`). Its companions
+(`candidates`, `repo_hour`, `releases`) get one snapshot a day from gharchive
+(`commit_day`) and one an hour from gharchive_index (`commit_hour`). Each
+table counts its own commits (`orca.tables.find_commit`), so a retried step
+finds, per table, what it already committed.
 """
 
 from iceberg.catalog.filesystem import Table
@@ -66,3 +67,20 @@ def commit_hour(
         change.removed = old.copy()
         return commit(ctx, t, "overwrite", change^)
     return append_files(ctx, t, files)
+
+
+def commit_day(
+    mut ctx: Ctx,
+    mut t: Table,
+    day: String,
+    column: String,
+    files: List[DataFile],
+) raises -> Int64:
+    """All of the day's `files` as `t`'s one commit of the step: found again
+    if an earlier attempt made it (it is the step's commit number 0 to `t`,
+    which `find_commit` matches), else an `overwrite` that also removes the
+    files an earlier run left for the day, else an append. `column` is
+    the table's day-partitioned timestamp column."""
+    if find_commit(ctx, t) >= 0:
+        return append(ctx, t, List[RecordBatch]())
+    return commit_hour(ctx, t, 0, 0, day_files(t, day, column), files)

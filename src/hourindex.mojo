@@ -269,6 +269,18 @@ def write_index(
     return out^
 
 
+def write_marker(day_start: Int64, which: Int, table: Table) raises -> FileEntries:
+    """A day with nothing at all for a table (`which`: 0 candidates, 1
+    repo_hour, 2 releases) commits one file anyway, since a snapshot needs
+    one: the marker row of `HourIndex`, for the day's first hour."""
+    var index = HourIndex(day_start)
+    if which == 0:
+        return _write(table, index.candidate_batch())
+    if which == 1:
+        return _write(table, index.repo_hour_batch())
+    return _write(table, index.releases_batch())
+
+
 def candidates_from(batches: List[RecordBatch]) raises -> Dict[String, Candidate]:
     """Candidates from rows of `gharchive.candidates` (columns repo, reason,
     first_seen, sha), merged the way `detect.scan_event` merges them over a
