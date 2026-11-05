@@ -1,9 +1,10 @@
-"""The console: a flare app over mojo.repos, mojo.commits and mojo.migrations.
+"""The console: a flare app over mojo.repos, mojo.commits, mojo.migrations,
+mojo.repo_stats, mojo.activity, mojo.releases and mojo.tags.
 
     PORT=8080 pixi run ./build/console
 
 Pages: `/` the libraries by size and age (`?sort=stars` for the most starred
-first), `/search?q=` finds libraries by name or description, `/versions` the
+first), `/search?q=` finds libraries by name, GitHub topic or description, `/versions` the
 migrations to each Mojo version over time, `/how` and `/how/optimizations`
 how the census is built, `/repos/<owner>/<name>` one library. The data pages
 have JSON at `/api/...`. Every request scans the tables again; they're small.
@@ -32,14 +33,20 @@ from jscan import micros_to_iso
 from model import (
     Library,
     Migration,
+    MonthActivity,
     Point,
+    Release,
     VersionMonth,
+    activity_by_month,
+    activity_months,
     day,
     history,
     libraries,
     migrations,
+    releases,
     versions_by_month,
 )
+from days import day_text
 from search import search_score, sort_families, url_decode, version_family
 from versions import sort_versions
 
@@ -118,6 +125,10 @@ td.what{white-space:normal;min-width:30ch}
 .legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
 .sort{margin:-8px 0 14px;font-size:13px}
 .note{max-width:72ch}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;white-space:normal;max-width:46ch}
+.chip{display:inline-block;font:500 11.5px/1.5 var(--mono);color:var(--muted);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:0 8px}
+a.chip:hover{color:var(--text);border-color:var(--border-strong);text-decoration:none}
+.head .chips{margin:0 0 14px;max-width:none}
 @media (max-width:640px){.top .wrap{gap:12px;flex-wrap:wrap;height:auto;padding-block:8px}.search{order:3;flex-basis:100%;max-width:none}.top nav{gap:12px}.top nav .sep,.top nav .arrow{display:none}.brand{font-size:15px}h1{font-size:24px}th,td{padding:9px 10px}main{padding-top:24px}footer nav{margin-left:0}}
 """
 
@@ -249,6 +260,22 @@ def _or_dash(s: String) -> String:
     return html_escape(s)
 
 
+def _chips(topics: List[String], limit: Int = 6) -> String:
+    """GitHub topics as chips, each a search for it."""
+    if len(topics) == 0:
+        return String()
+    var h = String("<div class=chips>")
+    for i in range(min(len(topics), limit)):
+        h.write(
+            "<a class=chip href='/search?q=", html_escape(topics[i]), "'>",
+            html_escape(topics[i]), "</a>",
+        )
+    if len(topics) > limit:
+        h.write("<span class=chip>+", len(topics) - limit, "</span>")
+    h.write("</div>")
+    return h^
+
+
 def _libs_table(libs: List[Library], today: Int) -> String:
     """The Libraries table, in the order of `libs`; the home page and the
     search results both draw it."""
@@ -263,7 +290,7 @@ def _libs_table(libs: List[Library], today: Int) -> String:
         var lines = _n(l.mojo_lines) if l.commits > 0 else String("<span class=mute>not read</span>")
         h.write(
             "<tr><td><a class=repo href='/repos/", html_escape(l.repo), "'>", html_escape(l.repo),
-            "</a></td><td class=num>", lines, "</td><td class=num>",
+            "</a>", _chips(l.topics), "</td><td class=num>", lines, "</td><td class=num>",
             _n(l.mojo_files), "</td><td class=num>", l.commits, "</td><td>",
             _age(l.created_at, today), "</td><td>", day(l.created_at),
             "</td><td class='mono soft'>", _or_dash(l.mojo_version), "</td><td>",
@@ -328,7 +355,7 @@ def _matches(query: String) raises -> List[Library]:
     var hits = List[Library]()
     var scores = List[Int]()
     for ref l in libraries():
-        var sc = search_score(l.repo, l.description, query)
+        var sc = search_score(l.repo, l.description, query, l.topics)
         if sc > 0:
             hits.append(l.copy())
             scores.append(sc)
@@ -349,7 +376,7 @@ def search(req: Request) raises -> Response:
             h.write(
                 _empty(
                     "Search the libraries",
-                    "Type part of a repository name or description in the box above,"
+                    "Type part of a repository name, topic or description in the box above,"
                     " for example flare or http. Names that match best come first.",
                 )
             )
@@ -357,7 +384,7 @@ def search(req: Request) raises -> Response:
         var hits = _matches(q)
         h.write(
             "<p class=lead>", len(hits), " ", "library" if len(hits) == 1 else "libraries",
-            " matching &ldquo;", html_escape(q), "&rdquo; in the repository name or description.</p>",
+            " matching &ldquo;", html_escape(q), "&rdquo; in the repository name, GitHub topics or description.</p>",
         )
         if len(hits) == 0:
             h.write(_empty("No libraries match", "Try a shorter word, or part of the owner or the name."))
@@ -385,6 +412,16 @@ def search_json(req: Request) raises -> Response:
         return internal_error(String(e))
 
 
+def _strs_json(items: List[String]) -> String:
+    var out = String("[")
+    for i in range(len(items)):
+        if i > 0:
+            out += ","
+        out += _q(items[i])
+    out += "]"
+    return out^
+
+
 def _lib_json(l: Library) -> String:
     return String(
         '{"repo":', _q(l.repo), ',"description":', _q(l.description),
@@ -394,7 +431,12 @@ def _lib_json(l: Library) -> String:
         ',"forks":', l.forks, ',"license":', _q(l.license),
         ',"size_kb":', l.size_kb, ',"commits":', l.commits,
         ',"mojo_lines":', l.mojo_lines, ',"mojo_files":', l.mojo_files,
-        ',"tooling":', _q(l.tooling), ',"mojo_version":', _q(l.mojo_version), "}",
+        ',"tooling":', _q(l.tooling), ',"mojo_version":', _q(l.mojo_version),
+        ',"topics":', _strs_json(l.topics),
+        ',"stats_as_of":', _q(day_text(l.stats_as_of) if l.stats_as_of > 0 else ""),
+        ',"open_issues":', l.open_issues, ',"watchers":', l.watchers,
+        ',"archived":', "true" if l.archived else "false",
+        ',"state":', _q(l.state), ',"renamed_to":', _q(l.renamed_to), "}",
     )
 
 
@@ -459,6 +501,29 @@ def _versions_chart(rows: List[VersionMonth]) raises -> String:
         counts[k] = c
         if c > top:
             top = c
+    return _line_chart(
+        months, names, counts, top,
+        String("Line chart: libraries migrating to each Mojo version family"),
+        String(
+            "Libraries migrating to each Mojo ", "version family" if by_family else "version",
+            " per month, ", months[0], " to ", last,
+        ),
+        String("Libraries per month; a library that moved twice in a month counts for each version."),
+    )
+
+
+def _line_chart(
+    months: List[String],
+    names: List[String],
+    counts: Dict[String, Int],
+    top: Int,
+    aria: String,
+    title: String,
+    note: String,
+) raises -> String:
+    """One line per name over `months`, from `counts` (`name|month`), as
+    inline SVG with a legend; the versions and the stars charts draw it."""
+    var last = months[len(months) - 1]
     var left = 36
     var right = 12
     var up = 10
@@ -468,9 +533,8 @@ def _versions_chart(rows: List[VersionMonth]) raises -> String:
     var ph = h - up - 30
     var n = len(months)
     var svg = String(
-        "<svg viewBox='0 0 ", w, " ", h, "' role=img aria-label='Line chart: libraries migrating to each Mojo ",
-        "version family' ><title>Libraries migrating to each Mojo ", "version family" if by_family else "version",
-        " per month, ", months[0], " to ", last, "</title>",
+        "<svg viewBox='0 0 ", w, " ", h, "' role=img aria-label='", html_escape(aria),
+        "'><title>", html_escape(title), "</title>",
     )
     # Gridlines and the Y axis: 0, the middle if there's room, the top.
     var ticks = List[Int]()
@@ -510,7 +574,7 @@ def _versions_chart(rows: List[VersionMonth]) raises -> String:
     legend.write("</ul>")
     return String(
         "<div class=card>", svg, legend,
-        "<p class=mute>Libraries per month; a library that moved twice in a month counts for each version.</p></div>",
+        "<p class=mute>", note, "</p></div>",
     )
 
 
@@ -610,6 +674,31 @@ def _chart(points: List[Point]) -> String:
     )
 
 
+comptime RELEASES_SHOWN = 30
+
+
+def _stars_chart(repo_months: List[MonthActivity], loaded: List[String]) raises -> String:
+    """Stars and forks per month from GH Archive, over the months loaded."""
+    var counts = Dict[String, Int]()
+    var top = 1
+    var total = Int64(0)
+    for ref a in repo_months:
+        counts[String("stars|", a.month)] = Int(a.stars)
+        counts[String("forks|", a.month)] = Int(a.forks)
+        top = max(top, Int(a.stars), Int(a.forks))
+        total += a.stars
+    var names: List[String] = ["stars", "forks"]
+    return _line_chart(
+        loaded, names, counts, top,
+        String("Line chart: stars and forks per month"),
+        String("Stars (WatchEvents) and forks per month in GH Archive, ", loaded[0], " to ", loaded[len(loaded) - 1]),
+        String(
+            _n(total), " stars over the months of GH Archive loaded so far (",
+            len(loaded), "; months in between aren't loaded yet), counted from its events.",
+        ),
+    )
+
+
 def _stat(label: String, value: String, note: String = "") -> String:
     """One tile of the title block; `value` and `note` are already escaped."""
     return String(
@@ -641,12 +730,21 @@ def repo_page(req: Request) raises -> Response:
             "<div class=head><h1><span class=owner>", html_escape(req.param("owner")),
             " /</span> ", html_escape(req.param("name")), "</h1>",
             "<p class=desc>", html_escape(l.description), "</p>",
+            _chips(l.topics, 100),
             "<p class=meta><a href='", gh, "' rel=noopener>GitHub &#8599;</a> &middot; first seen in GH Archive ",
             day(l.first_seen), " (", html_escape(l.found_by), ")",
             " &middot; ", _n(l.mojo_lines), " lines of Mojo in ", _n(l.mojo_files), " files at the last of ",
-            l.commits, " commits (", day(l.first_commit), " to ", day(l.last_commit), ")</p>",
-            "<div class=stats>",
-            _stat("Stars", _n(l.stars)), _stat("Forks", _n(l.forks)),
+            l.commits, " commits (", day(l.first_commit), " to ", day(l.last_commit), ")",
+            String(" &middot; <strong>archived</strong>") if l.archived else String(),
+            String(" &middot; now <a href='https://github.com/", html_escape(l.renamed_to), "' rel=noopener>",
+                html_escape(l.renamed_to), "</a>") if l.renamed_to.byte_length() > 0 else String(),
+            String(" &middot; GitHub says <strong>", html_escape(l.state), "</strong>")
+                if l.state.byte_length() > 0 and l.state != "ok" and l.state != "renamed" else String(),
+            "</p><div class=stats>",
+            _stat("Stars", _n(l.stars), String("as of ", day_text(l.stats_as_of)) if l.stats_as_of > 0 else String("when found")),
+            _stat("Forks", _n(l.forks)),
+            _stat("Open issues", _n(l.open_issues)) if l.stats_as_of > 0 else String(),
+            _stat("Watchers", _n(l.watchers)) if l.stats_as_of > 0 else String(),
             _stat("Created", day(l.created_at), String(_age(l.created_at, today), " ago") if l.created_at else String()),
             _stat("Lines of Mojo", _n(l.mojo_lines), String(_n(l.mojo_files), " files")),
             _stat("Commits", _n(Int64(l.commits)), String(day(l.first_commit), " to ", day(l.last_commit)) if l.commits > 0 else String()),
@@ -655,8 +753,45 @@ def repo_page(req: Request) raises -> Response:
             _stat("License", _or_dash(l.license)),
             "</div></div>",
             "<h2>Lines of Mojo</h2>", _chart(pts),
-            "<h2>Migrations</h2>",
+            "<h2>Stars per month</h2>",
         )
+        var loaded = activity_months()
+        if len(loaded) == 0:
+            h.write(_empty("No activity yet", "The activity pipeline hasn't counted this repository's GH Archive events yet."))
+        else:
+            h.write(_stars_chart(activity_by_month(repo), loaded))
+        h.write("<h2>Releases and tags</h2>")
+        var rels = releases(repo)
+        if len(rels) == 0:
+            h.write(_empty("No releases or tags", "No published release in the GH Archive days loaded, and no git tag in the clone."))
+        else:
+            h.write(
+                "<div class=tbl><table><thead><tr><th>Date</th><th>Tag</th><th>Name</th>",
+                "<th>From</th><th>Mojo version</th><th>Commit</th></tr></thead><tbody>",
+            )
+            for i in range(min(len(rels), RELEASES_SHOWN)):
+                ref x = rels[i]
+                var commit = String("<span class=mute>&ndash;</span>")
+                if x.commit.byte_length() > 0:
+                    commit = String(
+                        "<a class=mono href='", gh, "/commit/", html_escape(x.commit), "' rel=noopener>",
+                        html_escape(String(x.commit[byte=:10])), "</a>",
+                    )
+                h.write(
+                    "<tr><td>", day(x.at), "</td><td class='mono soft'><a href='", gh, "/releases/tag/",
+                    html_escape(x.tag), "' rel=noopener>", html_escape(x.tag), "</a>",
+                    " <span class=chip>pre-release</span>" if x.prerelease else "",
+                    "</td><td class=soft>", _or_dash(x.name), "</td><td>",
+                    "GitHub release" if x.source == "release" else "git tag",
+                    "</td><td class=mono>", _or_dash(x.mojo_version), "</td><td>", commit, "</td></tr>",
+                )
+            h.write("</tbody></table></div>")
+            if len(rels) > RELEASES_SHOWN:
+                h.write(
+                    "<p class=mute>The latest ", RELEASES_SHOWN, " of ", len(rels),
+                    "; all of them are in <a href='/api/repos/", html_escape(repo), "'>the JSON</a>.</p>",
+                )
+        h.write("<h2>Migrations</h2>")
         if len(ms) == 0:
             h.write(_empty("No migrations recorded", "No change of Mojo version or tooling between the commits read so far."))
         else:
@@ -729,6 +864,30 @@ def repo_json(req: Request) raises -> Response:
                 ',"mojo_lines":', p.lines, ',"tooling":', _q(p.tooling),
                 ',"mojo_version":', _q(p.version), "}",
             )
+        out += '],"activity":['
+        first = True
+        for ref a in activity_by_month(repo):
+            if not first:
+                out += ","
+            first = False
+            out.write(
+                '{"month":', _q(a.month), ',"stars":', a.stars, ',"forks":', a.forks,
+                ',"releases":', a.releases, ',"issues_opened":', a.issues_opened,
+                ',"prs_opened":', a.prs_opened, ',"pushes":', a.pushes,
+                ',"days_active":', a.days_active, "}",
+            )
+        out += '],"releases":['
+        first = True
+        for ref x in releases(repo):
+            if not first:
+                out += ","
+            first = False
+            out.write(
+                '{"tag":', _q(x.tag), ',"name":', _q(x.name), ',"at":',
+                _q(micros_to_iso(x.at) if x.at else ""), ',"prerelease":',
+                "true" if x.prerelease else "false", ',"source":', _q(x.source),
+                ',"commit":', _q(x.commit), ',"mojo_version":', _q(x.mojo_version), "}",
+            )
         out += "]}"
         return ok_json(out)
     except e:
@@ -740,7 +899,7 @@ comptime ORCA_UI = "https://orca.mlake.dev"
 comptime GH = "https://github.com/magmalake"
 
 comptime HOW = (
-    "<div class=prose><p class=lead>The census is three"
+    "<div class=prose><p class=lead>The census is five"
     " pipelines and this page, all Mojo. The pipelines run on <a href='"
     + ORCA_DOCS
     + "' rel=noopener>orca</a>, magmalake's pipeline orchestrator, on AWS; they"
@@ -763,7 +922,21 @@ comptime HOW = (
     + "/pipelines/mojo_history' rel=noopener>mojo_history</a> is keyed by"
     " repository: each new one is cloned and its history read, the Mojo files"
     " and lines at each commit into <code>mojo.commits</code> and each change of"
-    " Mojo version in its lock file into <code>mojo.migrations</code>.</li></ul>"
+    " Mojo version in its lock file into <code>mojo.migrations</code>, and its"
+    " git tags into <code>mojo.tags</code>.</li>"
+    "<li><a href='"
+    + ORCA_UI
+    + "/pipelines/mojo_activity' rel=noopener>mojo_activity</a> counts each"
+    " library's GH Archive events per day, with no API calls: stars, forks,"
+    " releases, issues and pull requests opened, pushes and people, into"
+    " <code>mojo.activity</code> and <code>mojo.releases</code>. A library found"
+    " today is read back over every day already loaded, so its history is"
+    " complete.</li>"
+    "<li><a href='"
+    + ORCA_UI
+    + "/pipelines/mojo_stats' rel=noopener>mojo_stats</a> asks GitHub about every"
+    " library each Monday (one request each) and keeps the stars, forks, issues"
+    " and topics week by week in <code>mojo.repo_stats</code>.</li></ul>"
     "<p>Every run, with its steps, logs, machines and the tables it wrote, is on"
     " <a href='"
     + ORCA_UI

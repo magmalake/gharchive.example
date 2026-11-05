@@ -80,9 +80,12 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   gone, blocked or renamed is a row with that `state`; a rate limit is
   waited out by `Retry-After` / `X-RateLimit-Reset`. A rerun of a day
   replaces that day's rows.
-- **`bin/console.mojo`**: the libraries by size and age (`/`), the Mojo
-  versions they moved to over time (`/versions`), and a page per
-  repository (`/repos/<owner>/<name>`), each also as JSON under `/api/`.
+- **`bin/console.mojo`**: the libraries by size and age (`/`, with their
+  GitHub topics), search by name, topic or description (`/search`), the
+  Mojo versions they moved to over time (`/versions`), and a page per
+  repository (`/repos/<owner>/<name>`: current stars, forks and topics
+  from the latest `mojo.repo_stats` row, stars per month from
+  `mojo.activity`, releases and tags), each also as JSON under `/api/`.
 - **`src/`**: the tables (`lake.mojo`), the JSON scanner, HTTP, detection, git history, and `versions.mojo`, which orders Mojo versions
   across Modular's renumbering (24.x, 25.x, 0.25.x, 0.26.x, 1.x);
   `tests/test_versions.mojo` tests that order. `activity.mojo` counts a

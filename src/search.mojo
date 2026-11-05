@@ -32,11 +32,17 @@ def url_decode(s: String) -> String:
     return String(from_utf8_lossy=out)
 
 
-def search_score(repo: String, description: String, query: String) -> Int:
+def search_score(
+    repo: String,
+    description: String,
+    query: String,
+    topics: List[String] = List[String](),
+) -> Int:
     """0 for no match, else higher for better: the name (the part after
     `owner/`) equal to the query, then starting with it, then containing it,
-    then `owner/name` or the description containing it. Case-insensitive; an
-    empty query matches nothing."""
+    then a GitHub topic equal to it, then `owner/name` containing it, then a
+    topic containing it, then the description. Case-insensitive; an empty
+    query matches nothing."""
     var q = String(query.strip()).lower()
     if q.byte_length() == 0:
         return 0
@@ -51,8 +57,14 @@ def search_score(repo: String, description: String, query: String) -> Int:
         return 80
     if q in name:
         return 60
+    for t in topics:
+        if t.lower() == q:
+            return 50
     if q in full:
         return 40
+    for t in topics:
+        if q in t.lower():
+            return 30
     if q in description.lower():
         return 20
     return 0
