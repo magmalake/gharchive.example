@@ -24,6 +24,7 @@ comptime ACTIVE_DAYS = 365
 comptime TOOL_NONE = UInt8(0)
 comptime TOOL_MAGIC = UInt8(1)
 comptime TOOL_PIXI = UInt8(2)
+comptime TOOL_BAZEL = UInt8(3)
 
 
 def month_of_days(days: Int) -> Int:
@@ -48,7 +49,7 @@ def month_label(index: Int) -> String:
 
 
 def tool_code(tooling: String) -> UInt8:
-    """`magic` is 1, `pixi` 2, anything else (`none`, empty) 0."""
+    """`magic` is 1, `pixi` 2, `bazel` 3, anything else (`none`, empty) 0."""
     var b = tooling.as_bytes()
     if len(b) == 0:
         return TOOL_NONE
@@ -56,6 +57,8 @@ def tool_code(tooling: String) -> UInt8:
         return TOOL_MAGIC
     if b[0] == UInt8(ord("p")):
         return TOOL_PIXI
+    if b[0] == UInt8(ord("b")):
+        return TOOL_BAZEL
     return TOOL_NONE
 
 
@@ -125,6 +128,7 @@ struct Overview(Movable):
     var tool_none: List[Int64]
     var tool_magic: List[Int64]
     var tool_pixi: List[Int64]
+    var tool_bazel: List[Int64]
 
     def __init__(out self):
         self.repos = 0
@@ -151,6 +155,7 @@ struct Overview(Movable):
         self.tool_none = List[Int64]()
         self.tool_magic = List[Int64]()
         self.tool_pixi = List[Int64]()
+        self.tool_bazel = List[Int64]()
 
 
 struct Builder(Movable):
@@ -271,6 +276,7 @@ struct Builder(Movable):
         var none = List[Int64](length=m, fill=0)
         var magic = List[Int64](length=m, fill=0)
         var pixi = List[Int64](length=m, fill=0)
+        var bazel = List[Int64](length=m, fill=0)
         var seq_p = self.cell_seq.unsafe_ptr()
         var lines_p = self.cell_lines.unsafe_ptr()
         var tool_p = self.cell_tool.unsafe_ptr()
@@ -291,6 +297,8 @@ struct Builder(Movable):
                         magic[k] += 1
                     elif carry_tool == TOOL_PIXI:
                         pixi[k] += 1
+                    elif carry_tool == TOOL_BAZEL:
+                        bazel[k] += 1
                     else:
                         none[k] += 1
         var first = 0
@@ -304,6 +312,7 @@ struct Builder(Movable):
             o.tool_none.append(none[k])
             o.tool_magic.append(magic[k])
             o.tool_pixi.append(pixi[k])
+            o.tool_bazel.append(bazel[k])
         return o^
 
 

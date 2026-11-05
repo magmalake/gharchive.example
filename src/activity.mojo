@@ -2,15 +2,18 @@
 day, the stars (WatchEvent), forks, published releases, issues and pull
 requests opened, pushes and distinct actors, and each published release.
 
-`day_activity` reads one day of `gharchive.events` for a set of
-repositories (a dista task in mojo_activity); `add_event` is what it does
-with each event, and `parse_release` reads a ReleaseEvent's payload.
+`day_activity` reads one day of `gharchive.repo_hour` and
+`gharchive.releases` for a set of repositories (a dista task in
+mojo_activity); gharchive's hour tasks wrote those tables with `add_event`'s
+counting (`hourindex.HourIndex.add` does the same per hour, and
+`parse_release` reads a ReleaseEvent's payload).
 """
 
 from std.time import perf_counter_ns
 
 from dista import Seq
 from iceberg.batch import ColumnBuilder, batch_of
+from iceberg.json import json_quote
 from iceberg.values import Datum
 from orca.tables import load_dataset
 from parquet import RecordBatch
@@ -19,7 +22,8 @@ from cols import bool_at, col, i32_at, i64_at, str_at, str_range
 from days import day_text, days_of
 from jscan import Range, field, text, timestamp_micros
 from lake import (
-    EVENTS,
+    GH_RELEASES,
+    REPO_HOUR,
     activity_schema,
     date,
     releases_schema,
@@ -150,64 +154,101 @@ def finish(var accs: Dict[String, Acc]) -> List[ActivityRow]:
     return out^
 
 
-def fold_batch(
+def fold_hours(
     b: RecordBatch,
     day: Int64,
     repos: Dict[String, Bool],
     mut accs: Dict[String, Acc],
-    mut releases: List[ReleaseRow],
 ) raises:
-    """Adds a batch's events of `repos` (columns type, repo, actor, payload)."""
-    ref ty = b.column(col(b, "type"))
+    """Adds a batch of `gharchive.repo_hour` rows of `repos` (columns repo,
+    actor, events, stars, forks, releases, issues_opened, prs_opened,
+    pushes): the counts `add_event` makes from the events themselves."""
     ref rp = b.column(col(b, "repo"))
     ref ac = b.column(col(b, "actor"))
-    ref pl = b.column(col(b, "payload"))
-    var pv = Span(pl.values)
+    ref ev = b.column(col(b, "events"))
+    ref st = b.column(col(b, "stars"))
+    ref fk = b.column(col(b, "forks"))
+    ref rl = b.column(col(b, "releases"))
+    ref io = b.column(col(b, "issues_opened"))
+    ref po = b.column(col(b, "prs_opened"))
+    ref ps = b.column(col(b, "pushes"))
     for r in range(b.num_rows):
         var repo = str_at(rp, r)
         if repo not in repos:
             continue
         if repo not in accs:
             accs[repo] = Acc(repo, day)
-        var pr = str_range(pl, r)
-        var t = str_at(ty, r)
-        add_event(accs[repo], releases, t, str_at(ac, r), pv[pr[0] : pr[1]])
+        ref a = accs[repo]
+        a.row.events += i64_at(ev, r)
+        a.row.stars += i64_at(st, r)
+        a.row.forks += i64_at(fk, r)
+        a.row.releases += i64_at(rl, r)
+        a.row.issues_opened += i64_at(io, r)
+        a.row.prs_opened += i64_at(po, r)
+        a.row.pushes += i64_at(ps, r)
+        var actor = str_at(ac, r)
+        if actor.byte_length() > 0:
+            a.actors[actor] = True
 
 
-def encode_job(day: String, snapshot: Int64, repos: List[String]) -> String:
-    """A day's task argument: the day, the events snapshot, the repositories."""
-    var s = String(day, "\n", snapshot)
+def encode_job(
+    day: String, hours: Int64, releases: Int64, repos: List[String]
+) -> String:
+    """A day's task argument: the day, the snapshots of `gharchive.repo_hour`
+    and `gharchive.releases`, the repositories."""
+    var s = String(day, "\n", hours, "\n", releases)
     for r in repos:
         s += "\n"
         s += r
     return s^
 
 
+def _in_filter(column: String, repos: Dict[String, Bool]) -> String:
+    var s = String('["in","', column, '",[')
+    var first = True
+    for e in repos.items():
+        if not first:
+            s += ","
+        first = False
+        s += json_quote(e.key)
+    s += "]]"
+    return s^
+
+
 def day_activity(job: String) raises -> DayActivity:
-    """On a worker: one day of gharchive.events (at the step's pinned
-    snapshot) for the repositories in `job` (`encode_job`)."""
+    """On a worker: one day of `gharchive.repo_hour` and `gharchive.releases`
+    (at the step's pinned snapshots) for the repositories in `job`
+    (`encode_job`)."""
     var t0 = perf_counter_ns()
     var lines = job.split("\n")
     var day = String(lines[0])
-    var snapshot = Int64(Int(lines[1]))
+    var hours_snapshot = Int64(Int(lines[1]))
+    var releases_snapshot = Int64(Int(lines[2]))
     var repos = Dict[String, Bool]()
-    for i in range(2, len(lines)):
+    for i in range(3, len(lines)):
         repos[String(lines[i])] = True
     var d = days_of(day)
     var accs = Dict[String, Acc]()
     var releases = List[ReleaseRow]()
     var scanned = 0
+    var within = String(
+        '["and",[">=","', "@", '","', day, 'T00:00:00Z"],',
+        '["<","', "@", '","', day_text(d + 1), 'T00:00:00Z"]]',
+    )
     try:
-        var events = load_dataset(EVENTS)
+        var hours = load_dataset(REPO_HOUR)
+        var by_repo = _in_filter("repo", repos)
         var filter = String(
-            '["and",[">=","created_at","', day, 'T00:00:00Z"],',
-            '["<","created_at","', day_text(d + 1), 'T00:00:00Z"]]',
+            '["and",', within.replace("@", "hour"), ",", by_repo, "]"
         )
         var reader = (
-            events.scan()
-            .use_snapshot(snapshot)
+            hours.scan()
+            .use_snapshot(hours_snapshot)
             .filter(filter)
-            .select(["type", "repo", "actor", "payload"])
+            .select([
+                "repo", "actor", "events", "stars", "forks", "releases",
+                "issues_opened", "prs_opened", "pushes",
+            ])
             .to_batch_reader()
         )
         while True:
@@ -216,9 +257,44 @@ def day_activity(job: String) raises -> DayActivity:
                 break
             var b = next.take()
             scanned += b.num_rows
-            fold_batch(b, d, repos, accs, releases)
+            fold_hours(b, d, repos, accs)
+        if releases_snapshot >= 0:
+            var rels = load_dataset(GH_RELEASES)
+            var rfilter = String(
+                '["and",', within.replace("@", "created_at"), ",", by_repo, "]"
+            )
+            var rreader = (
+                rels.scan()
+                .use_snapshot(releases_snapshot)
+                .filter(rfilter)
+                .select([
+                    "repo", "actor", "tag", "name", "published_at",
+                    "prerelease",
+                ])
+                .to_batch_reader()
+            )
+            while True:
+                var next = rreader.next_batch()
+                if not next:
+                    break
+                var b = next.take()
+                for r in range(b.num_rows):
+                    var repo = str_at(b.column(col(b, "repo")), r)
+                    if repo not in repos:
+                        continue
+                    releases.append(
+                        ReleaseRow(
+                            repo,
+                            d,
+                            str_at(b.column(col(b, "tag")), r),
+                            str_at(b.column(col(b, "name")), r),
+                            i64_at(b.column(col(b, "published_at")), r),
+                            bool_at(b.column(col(b, "prerelease")), r),
+                            str_at(b.column(col(b, "actor")), r),
+                        )
+                    )
     except e:
-        raise Error(day, ": reading ", EVENTS, ": ", e)
+        raise Error(day, ": reading ", REPO_HOUR, ": ", e)
     var rows = Seq[ActivityRow]()
     for ref r in finish(accs^):
         rows.append(r.copy())

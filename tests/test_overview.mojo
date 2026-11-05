@@ -45,6 +45,7 @@ def test_months() raises:
 def test_tool_code() raises:
     assert_equal(tool_code("magic"), 1)
     assert_equal(tool_code("pixi"), 2)
+    assert_equal(tool_code("bazel"), 3)
     assert_equal(tool_code("none"), 0)
     assert_equal(tool_code(""), 0)
 

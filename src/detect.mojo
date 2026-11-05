@@ -120,7 +120,7 @@ def names_mojo_file(b: Span[UInt8, _], s: Int, e: Int) -> Bool:
     return False
 
 
-def _note(
+def note(
     mut found: Dict[String, Candidate],
     repo: String,
     signal: String,
@@ -150,7 +150,7 @@ def scan_event(
     """Adds the candidates one event points at to `found`."""
     var rb = repo.as_bytes()
     if contains_ci(rb, 0, len(rb), "mojo"):
-        _note(found, repo, "name", at)
+        note(found, repo, "name", at)
     var n = len(payload)
     if n == 0:
         return
@@ -162,14 +162,14 @@ def scan_event(
             for side in ["base", "head"]:
                 var r = path(payload, field(payload, all, "pull_request"), side, "repo")
                 if text(payload, field(payload, r, "language")) == "Mojo":
-                    _note(found, text(payload, field(payload, r, "full_name")), "language", at)
+                    note(found, text(payload, field(payload, r, "full_name")), "language", at)
         elif type == "ForkEvent":
             var f = field(payload, all, "forkee")
             if text(payload, field(payload, f, "language")) == "Mojo":
-                _note(found, text(payload, field(payload, f, "full_name")), "language", at)
-            _note(found, repo, "language", at)
+                note(found, text(payload, field(payload, f, "full_name")), "language", at)
+            note(found, repo, "language", at)
         else:
-            _note(found, repo, "language", at)
+            note(found, repo, "language", at)
     if type == "PushEvent":
         if not contains_ci(payload, 0, n, ".mojo") and not contains_ci(
             payload, 0, n, "🔥"
@@ -180,13 +180,13 @@ def scan_event(
             if not msg.found():
                 continue
             if names_mojo_file(payload, msg.start, msg.end):
-                _note(found, repo, "push", at, text(payload, field(payload, c, "sha")))
+                note(found, repo, "push", at, text(payload, field(payload, c, "sha")))
             if contains_ci(payload, msg.start, msg.end, "mojoproject.toml"):
-                _note(found, repo, "manifest", at)
+                note(found, repo, "manifest", at)
     elif type == "CreateEvent":
         var d = field(payload, all, "description")
         if d.found() and contains_ci(payload, d.start, d.end, "mojo"):
-            _note(found, repo, "description", at)
+            note(found, repo, "description", at)
 
 
 @fieldwise_init

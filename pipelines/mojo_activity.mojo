@@ -1,16 +1,18 @@
 """The mojo_activity pipeline: each Mojo repository's activity per day, from
 GH Archive, with no API calls.
 
-Daily from 2023-01-01 and a sensor on `gharchive.events` and `mojo.repos`:
+Daily from 2023-01-01 and a sensor on `gharchive.repo_hour`, `gharchive.releases` and `mojo.repos`:
 each day gharchive loads starts a run for that day, and so does each
 snapshot mojo_repos adds repositories in. A run's one step reads the day's
-events for every repository in `mojo.repos` and writes `mojo.activity`
+counts (`gharchive.repo_hour`, which gharchive wrote per repository, actor
+and hour while it parsed the events) for every repository in `mojo.repos`, and writes `mojo.activity`
 (counts per repository and day) and `mojo.releases` (published releases).
 
 **Repositories found later get their whole history.** A repository isn't
 caught up until it is in `mojo.activity_repos`. A run that finds members
 of `mojo.repos` that aren't also reads, for them, every other day
-`gharchive.events` has (from the day each was created), and records them
+`gharchive.repo_hour` has (from the day each was created; a few row
+groups of each hour's files, not the day's events), and records them
 there; from then on every day's run includes them as members. Each day's
 scan is a dista task, so a run that catches up reads its days in parallel.
 
@@ -51,8 +53,9 @@ from days import day_text, days_of, month_of
 from lake import (
     ACTIVITY,
     ACTIVITY_REPOS,
-    EVENTS,
+    GH_RELEASES,
     RELEASES,
+    REPO_HOUR,
     REPOS,
     activity_repos_schema,
     activity_schema,
@@ -95,9 +98,9 @@ def _caught_up(t: Table) -> Dict[String, Bool]:
     return out^
 
 
-def _loaded_days(events: Table, pinned: Int64) raises -> List[String]:
-    """The days gharchive.events holds at the pinned snapshot, from its data
-    files' `created_day` partitions, sorted.
+def _loaded_days(hours: Table, pinned: Int64) raises -> List[String]:
+    """The days gharchive.repo_hour holds at the pinned snapshot, from its
+    data files' day partitions, sorted.
 
     This used to walk the table's snapshots for their `orca.partition`,
     which expiry takes away (the table keeps a week of them); the files a
@@ -105,7 +108,7 @@ def _loaded_days(events: Table, pinned: Int64) raises -> List[String]:
     var seen = Dict[Int64, Bool]()
     if pinned < 0:
         return List[String]()
-    for task in events.scan().use_snapshot(pinned).plan_files():
+    for task in hours.scan().use_snapshot(pinned).plan_files():
         ref f = task.data_file
         if len(f.partition) > 0 and f.partition[0].valid:
             seen[f.partition[0].i] = True
@@ -131,8 +134,10 @@ def activity(mut ctx: Ctx, d: Day) raises -> Int:
     var day = String(d)
     var key_day = days_of(day)
     var members = _members(ctx)
-    var events = table(ctx, EVENTS)
-    var pinned = scan(ctx, events).snapshot().snapshot_id
+    var hours_t = table(ctx, REPO_HOUR)
+    var rels_t = table(ctx, GH_RELEASES)
+    var pinned = scan(ctx, hours_t).snapshot().snapshot_id
+    var pinned_rels = scan(ctx, rels_t).snapshot().snapshot_id
     var act_t = ensure_table(ctx, ACTIVITY, activity_schema(), activity_spec())
     var rel_t = ensure_table(ctx, RELEASES, releases_schema(), releases_spec())
     var cau_t = ensure_table(ctx, ACTIVITY_REPOS, activity_repos_schema())
@@ -150,7 +155,7 @@ def activity(mut ctx: Ctx, d: Day) raises -> Int:
     for e in members.items():
         if e.key not in caught:
             fresh.append(e.key)
-    var loaded = _loaded_days(events, pinned)
+    var loaded = _loaded_days(hours_t, pinned)
     if len(fresh) > 0:
         for ref ld in loaded:
             if ld == day:
@@ -176,7 +181,7 @@ def activity(mut ctx: Ctx, d: Day) raises -> Int:
     var refs = List[ObjectRef[DayActivity]]()
     var next = 0
     while next < len(order) and next < window:
-        refs.append(rt.remote[DayTask](encode_job(order[next], pinned, jobs[order[next]])))
+        refs.append(rt.remote[DayTask](encode_job(order[next], pinned, pinned_rels, jobs[order[next]])))
         next += 1
     var new_rows = List[ActivityRow]()
     var new_rels = List[ReleaseRow]()
@@ -187,7 +192,7 @@ def activity(mut ctx: Ctx, d: Day) raises -> Int:
         var got = rt.get(refs[i])
         rt.release(refs[i])
         if next < len(order):
-            refs.append(rt.remote[DayTask](encode_job(order[next], pinned, jobs[order[next]])))
+            refs.append(rt.remote[DayTask](encode_job(order[next], pinned, pinned_rels, jobs[order[next]])))
             next += 1
         var gd = days_of(order[i])
         months[month_of(gd)] = True
@@ -201,7 +206,7 @@ def activity(mut ctx: Ctx, d: Day) raises -> Int:
             new_rels.append(r.copy())
         scanned += got.scanned
         ctx.log(String(
-            order[i], ": ", got.scanned, " events, ", len(got.rows),
+            order[i], ": ", got.scanned, " repo-hour rows, ", len(got.rows),
             " repositories active, ", stars, " stars, ", len(got.releases),
             " releases (", got.ms, " ms)",
         ))
@@ -260,7 +265,7 @@ def activity(mut ctx: Ctx, d: Day) raises -> Int:
             c_days.add(Datum.long_(Int64(len(loaded))))
         _ = append(ctx, cau_t, [batch_of([c_repo^, c_at^, c_days^])])
     ctx.log(String(
-        day, ": ", scanned, " events read over ", len(order), " days; ",
+        day, ": ", scanned, " repo-hour rows read over ", len(order), " days; ",
         n_rows, " activity rows and ", n_rels, " releases written (",
         len(kept_rows), " and ", len(kept_rels), " kept), snapshot ", id,
     ))
@@ -274,7 +279,7 @@ comptime Activity = Step[
     activity,
     Mapped,
     retries=1,
-    reads=[EVENTS, REPOS],
+    reads=[REPO_HOUR, GH_RELEASES, REPOS],
     writes=[ACTIVITY, RELEASES, ACTIVITY_REPOS],
 ]
 comptime MojoActivity = Pipeline[

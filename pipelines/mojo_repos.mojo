@@ -1,7 +1,8 @@
-"""The mojo_repos pipeline: Mojo repositories found in `gharchive.events`.
+"""The mojo_repos pipeline: Mojo repositories found in `gharchive.candidates`.
 
 A sensor: each day gharchive commits starts a run for that day. The step
-reads the day's events, collects candidates (`detect.scan_event`), asks
+reads the day's rows of `gharchive.candidates` (which gharchive's hour tasks
+wrote with `detect.scan_event` while they parsed the events), asks
 GitHub about the ones it hasn't asked about before (`detect.verify`), and
 appends the Mojo ones to `mojo.repos` and every answer to `mojo.checked`.
 mojo_history is keyed on `mojo.repos`' `repo` column, so each snapshot of
@@ -22,14 +23,14 @@ from iceberg.values import Datum
 from orca import Ctx, Daily, Day, Mapped, Pipeline, Step, orca_main
 from orca.civil import now
 from orca.tables import append, ensure_table, scan, table
-from parquet import RecordBatch
 
 from cols import col, i64_at, str_at, str_range
-from detect import Candidate, Verdict, scan_event, verify
+from detect import Candidate, Verdict, verify
+from hourindex import candidates_from
 from jscan import days_from_civil
 from lake import (
     CHECKED,
-    EVENTS,
+    CANDIDATES,
     REPOS,
     checked_schema,
     json_strings,
@@ -95,44 +96,29 @@ def _now_micros() raises -> Int64:
     return now() * 1_000_000
 
 
-def _scan_batch(b: RecordBatch, mut found: Dict[String, Candidate]) raises:
-    ref ty = b.column(col(b, "type"))
-    ref repo = b.column(col(b, "repo"))
-    ref at = b.column(col(b, "created_at"))
-    ref payload = b.column(col(b, "payload"))
-    var pv = Span(payload.values)
-    for r in range(b.num_rows):
-        var pr = str_range(payload, r)
-        scan_event(found, str_at(ty, r), str_at(repo, r), i64_at(at, r), pv[pr[0] : pr[1]])
+def _day_candidates(mut ctx: Ctx, d: Day) raises -> Dict[String, Candidate]:
+    """The day's candidates from `gharchive.candidates`, merged the way
+    `detect.scan_event` merged them over the day's events: signals added in
+    the order they were noticed, the earliest `first_seen`, the first
+    `sha`."""
+    var lo = Int64(days_from_civil(d.year, d.month, d.day)) * 86_400_000_000
+    var hi = lo + 86_400_000_000
+    var cands = table(ctx, CANDIDATES)
+    var filter = String(
+        '["and",[">=","hour",', lo, '],["<","hour",', hi, "]]"
+    )
+    return candidates_from(
+        scan(ctx, cands)
+        .filter(filter)
+        .select(["repo", "reason", "first_seen", "sha"])
+        .to_batches()
+    )
+
 
 
 def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
-    var lo = Int64(days_from_civil(d.year, d.month, d.day)) * 86_400_000_000
-    var hi = lo + 86_400_000_000
-    var events = table(ctx, EVENTS)
-    var filter = String(
-        '["and",[">=","created_at",', lo, '],["<","created_at",', hi, "]]"
-    )
-    var reader = (
-        scan(ctx, events)
-        .filter(filter)
-        .select(["type", "repo", "created_at", "payload"])
-        .to_batch_reader()
-    )
-    var found = Dict[String, Candidate]()
-    var rows = 0
-    while True:
-        var next: Optional[RecordBatch]
-        try:
-            next = reader.next_batch()
-        except e:
-            raise Error(String(d), ": reading ", EVENTS, ": ", e)
-        if not next:
-            break
-        var b = next.take()
-        _scan_batch(b, found)
-        rows += b.num_rows
-    ctx.log(String(String(d), ": ", rows, " events, ", len(found), " candidates"))
+    var found = _day_candidates(ctx, d)
+    ctx.log(String(String(d), ": ", len(found), " candidates"))
 
     # Leave out what an earlier day already settled.
     var repos_t = ensure_table(ctx, REPOS, repos_schema())
@@ -252,7 +238,7 @@ comptime FindRepos = Step[
     find_repos,
     Mapped,
     retries=1,
-    reads=[EVENTS],
+    reads=[CANDIDATES],
     writes=[REPOS, CHECKED],
 ]
 comptime MojoRepos = Pipeline[

@@ -17,9 +17,11 @@ build-mojo-repos = "mkdir -p build && mojo build -I src pipelines/mojo_repos.moj
 build-mojo-history = "mkdir -p build && mojo build -I src pipelines/mojo_history.mojo -o build/mojo_history"
 build-mojo-activity = "mkdir -p build && mojo build -I src pipelines/mojo_activity.mojo -o build/mojo_activity"
 build-mojo-stats = "mkdir -p build && mojo build -I src pipelines/mojo_stats.mojo -o build/mojo_stats"
-build-pipelines = { depends-on = ["build-gharchive", "build-mojo-repos", "build-mojo-history", "build-mojo-activity", "build-mojo-stats"] }
+build-gharchive-index = "mkdir -p build && mojo build -I src pipelines/gharchive_index.mojo -o build/gharchive_index"
+build-mojo-retool = "mkdir -p build && mojo build -I src pipelines/mojo_retool.mojo -o build/mojo_retool"
+build-pipelines = { depends-on = ["build-gharchive", "build-gharchive-index", "build-mojo-repos", "build-mojo-history", "build-mojo-retool", "build-mojo-activity", "build-mojo-stats"] }
 build = { depends-on = ["build-orca", "build-maintain", "build-pipelines", "build-console"] }
-test = "mojo run -I src tests/test_versions.mojo && mojo run -I src tests/test_history.mojo && mojo run -I src tests/test_datafiles.mojo && mojo run -I src tests/test_jscan.mojo && mojo run -I src tests/test_events.mojo && mojo run -I src tests/test_search.mojo && mojo run -I src tests/test_activity.mojo && mojo run -I src tests/test_stats.mojo && mojo run -I src tests/test_overview.mojo"
+test = "mojo run -I src tests/test_versions.mojo && mojo run -I src tests/test_history.mojo && mojo run -I src tests/test_datafiles.mojo && mojo run -I src tests/test_jscan.mojo && mojo run -I src tests/test_events.mojo && mojo run -I src tests/test_search.mojo && mojo run -I src tests/test_activity.mojo && mojo run -I src tests/test_hourindex.mojo && mojo run -I src tests/test_stats.mojo && mojo run -I src tests/test_overview.mojo"
 
 [dependencies]
 mojo-compiler = "==1.2.0"
@@ -44,6 +46,6 @@ avro-mojo = { git = "https://github.com/magmalake/avro.mojo.git", rev = "d5b26cc
 roaring-mojo = { git = "https://github.com/magmalake/roaring.mojo.git", rev = "a90a7bd30cf1c21403a29059282072e93fbeeee2" }
 hashes-mojo = { git = "https://github.com/magmalake/hashes.mojo.git", rev = "395aca597f9410bd0511df44d972f14b10a8b01d" }
 iceberg-mojo = { git = "https://github.com/magmalake/iceberg.mojo.git", rev = "ab62e59fbf3f54e86f8832c6a545c8831e99e333" }
-orca-mojo = { git = "https://github.com/magmalake/orca.mojo.git", rev = "d8caa7e6328ba0b2d428b2d73bf8a1265e087e0f" }
+orca-mojo = { git = "https://github.com/magmalake/orca.mojo.git", rev = "b03b18aa1ac1d2e7f4d94da21337d0836f7cfc99" }
 postgresql = ">=18.4,<19"
 git = ">=2.56.0,<3"

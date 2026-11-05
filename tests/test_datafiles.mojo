@@ -40,6 +40,10 @@ def test_round_trip() raises:
     sent.files = FileEntries(files.copy())
     sent.rows = 300
     sent.parse_ms = 7
+    # The hour's index files ride along, nested.
+    sent.index.repo_hour = FileEntries(files.copy())
+    sent.index.repo_hour_rows = 42
+    sent.index_ms = 9
     var bytes = List[UInt8]()
     encode(sent, bytes)
     var pos = 0
@@ -47,6 +51,11 @@ def test_round_trip() raises:
     assert_equal(pos, len(bytes))
     assert_equal(back.rows, 300)
     assert_equal(back.parse_ms, 7)
+    assert_equal(back.index.repo_hour_rows, 42)
+    assert_equal(back.index_ms, 9)
+    assert_equal(len(back.index.repo_hour), len(files))
+    assert_equal(len(back.index.candidates), 0)
+    assert_equal(back.index.repo_hour.files[0].file_path, files[0].file_path)
     ref got = back.files
     assert_equal(len(got), len(files))
     for k in range(len(files)):

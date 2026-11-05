@@ -939,22 +939,25 @@ def overview(req: Request, mut c: Cache) raises -> Response:
             var none = List[Int64]()
             var magic = List[Int64]()
             var pixi = List[Int64]()
+            var bazel = List[Int64]()
             for k in range(len(m)):
-                var tot = ov.tool_none[k] + ov.tool_magic[k] + ov.tool_pixi[k]
+                var tot = ov.tool_none[k] + ov.tool_magic[k] + ov.tool_pixi[k] + ov.tool_bazel[k]
                 var t = tot if tot > 0 else Int64(1)
                 none.append(ov.tool_none[k] * 100 // t)
                 magic.append(ov.tool_magic[k] * 100 // t)
                 pixi.append(ov.tool_pixi[k] * 100 // t)
-            var tool_names: List[String] = ["none", "magic", "pixi"]
-            var tool_colors: List[String] = ["var(--c5)", "var(--c1)", "var(--c2)"]
+                bazel.append(ov.tool_bazel[k] * 100 // t)
+            var tool_names: List[String] = ["none", "magic", "pixi", "bazel"]
+            var tool_colors: List[String] = ["var(--c5)", "var(--c1)", "var(--c2)", "var(--c3)"]
             var tool_series = List[List[Int64]]()
             tool_series.append(none^)
             tool_series.append(magic^)
             tool_series.append(pixi^)
+            tool_series.append(bazel^)
             h.write(
                 _curve_card(
                     "Tooling", m, tool_names, tool_series, tool_colors, True,
-                    "Share of repos by how they manage Mojo: no lock file or manifest, magic, or pixi.",
+                    "Share of repos by how they manage Mojo: no lock file or manifest, magic, pixi, or bazel.",
                 ),
                 "</div>",
             )
@@ -1052,7 +1055,8 @@ def overview_json(req: Request, mut c: Cache) raises -> Response:
                 '{"month":', _q(ov.months[k]), ',"mojo_lines":', ov.lines_series[k],
                 ',"repos":', ov.repos_series[k], ',"commits":', ov.commits_series[k],
                 ',"tooling":{"none":', ov.tool_none[k], ',"magic":', ov.tool_magic[k],
-                ',"pixi":', ov.tool_pixi[k], "}}",
+                ',"pixi":', ov.tool_pixi[k],
+                ',"bazel":', ov.tool_bazel[k], "}}",
             )
         out += '],"rising":['
         for i in range(len(c.rising)):
