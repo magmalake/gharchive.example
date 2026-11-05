@@ -9,6 +9,8 @@ version = "0.1.0"
 [tasks]
 # Build the way orca's image does: every program with -I src.
 build-orca = "mkdir -p build && mojo build bin/scheduler.mojo -o build/orca"
+# Snapshot expiry, which `orca expire` and the scheduler run beside orca.
+build-maintain = "mkdir -p build && mojo build bin/orca_maintain.mojo -o build/orca_maintain"
 build-console = "mkdir -p build && mojo build -I src bin/console.mojo -o build/console"
 build-gharchive = "mkdir -p build && mojo build -I src pipelines/gharchive.mojo -o build/gharchive"
 build-mojo-repos = "mkdir -p build && mojo build -I src pipelines/mojo_repos.mojo -o build/mojo_repos"
@@ -16,7 +18,7 @@ build-mojo-history = "mkdir -p build && mojo build -I src pipelines/mojo_history
 build-mojo-activity = "mkdir -p build && mojo build -I src pipelines/mojo_activity.mojo -o build/mojo_activity"
 build-mojo-stats = "mkdir -p build && mojo build -I src pipelines/mojo_stats.mojo -o build/mojo_stats"
 build-pipelines = { depends-on = ["build-gharchive", "build-mojo-repos", "build-mojo-history", "build-mojo-activity", "build-mojo-stats"] }
-build = { depends-on = ["build-orca", "build-pipelines", "build-console"] }
+build = { depends-on = ["build-orca", "build-maintain", "build-pipelines", "build-console"] }
 test = "mojo run -I src tests/test_versions.mojo && mojo run -I src tests/test_history.mojo && mojo run -I src tests/test_datafiles.mojo && mojo run -I src tests/test_jscan.mojo && mojo run -I src tests/test_events.mojo && mojo run -I src tests/test_search.mojo && mojo run -I src tests/test_activity.mojo && mojo run -I src tests/test_stats.mojo && mojo run -I src tests/test_overview.mojo"
 
 [dependencies]
@@ -41,7 +43,7 @@ sqlite-mojo = { git = "https://github.com/magmalake/sqlite.mojo.git", rev = "0d7
 avro-mojo = { git = "https://github.com/magmalake/avro.mojo.git", rev = "d5b26ccefa8c49cc3af517731f5df104762119e0" }
 roaring-mojo = { git = "https://github.com/magmalake/roaring.mojo.git", rev = "a90a7bd30cf1c21403a29059282072e93fbeeee2" }
 hashes-mojo = { git = "https://github.com/magmalake/hashes.mojo.git", rev = "395aca597f9410bd0511df44d972f14b10a8b01d" }
-iceberg-mojo = { git = "https://github.com/magmalake/iceberg.mojo.git", rev = "24fe93128e4acbd903880dd9b23656f5ebc73fbc" }
-orca-mojo = { git = "https://github.com/magmalake/orca.mojo.git", rev = "bc13c25f793753df04979b9408fa4737b0a1f63c" }
+iceberg-mojo = { git = "https://github.com/magmalake/iceberg.mojo.git", rev = "ab62e59fbf3f54e86f8832c6a545c8831e99e333" }
+orca-mojo = { git = "https://github.com/magmalake/orca.mojo.git", rev = "d8caa7e6328ba0b2d428b2d73bf8a1265e087e0f" }
 postgresql = ">=18.4,<19"
 git = ">=2.56.0,<3"

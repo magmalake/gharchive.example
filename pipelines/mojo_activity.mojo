@@ -95,24 +95,31 @@ def _caught_up(t: Table) -> Dict[String, Bool]:
     return out^
 
 
-def _loaded_days(events: Table, pinned: Int64) -> List[String]:
-    """The days gharchive committed, up to the pinned snapshot, from the
-    snapshots' `orca.partition`, sorted."""
-    var seen = Dict[String, Bool]()
-    for s in events.metadata.snapshots:
-        var p = s.summary.get("orca.partition", String())
-        if p.byte_length() == 10:
-            seen[p] = True
-        if s.snapshot_id == pinned:
-            break
-    var out = List[String]()
+def _loaded_days(events: Table, pinned: Int64) raises -> List[String]:
+    """The days gharchive.events holds at the pinned snapshot, from its data
+    files' `created_day` partitions, sorted.
+
+    This used to walk the table's snapshots for their `orca.partition`,
+    which expiry takes away (the table keeps a week of them); the files a
+    snapshot reads are what it holds whatever history is left."""
+    var seen = Dict[Int64, Bool]()
+    if pinned < 0:
+        return List[String]()
+    for task in events.scan().use_snapshot(pinned).plan_files():
+        ref f = task.data_file
+        if len(f.partition) > 0 and f.partition[0].valid:
+            seen[f.partition[0].i] = True
+    var days = List[Int64]()
     for e in seen.items():
-        out.append(e.key)
-    for i in range(1, len(out)):
+        days.append(e.key)
+    for i in range(1, len(days)):
         var j = i
-        while j > 0 and out[j - 1] > out[j]:
-            out.swap_elements(j - 1, j)
+        while j > 0 and days[j - 1] > days[j]:
+            days.swap_elements(j - 1, j)
             j -= 1
+    var out = List[String]()
+    for d in days:
+        out.append(day_text(d))
     return out^
 
 

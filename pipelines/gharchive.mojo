@@ -39,7 +39,7 @@ from parquet import RecordBatch
 from datafiles import DataFiles
 from events import fetch_hour, parse_hours
 from days import day_text, days_of
-from lake import EVENTS, events_schema, events_spec
+from lake import EVENTS, events_properties, events_schema, events_spec
 from replace import partition_files
 
 
@@ -58,7 +58,9 @@ comptime GhTasks = Tasks[Hour]
 def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
     var day = String(d)
     var hours = parse_hours(getenv("GHARCHIVE_HOURS"))
-    var table = ensure_table(ctx, EVENTS, events_schema(), events_spec())
+    var table = ensure_table(
+        ctx, EVENTS, events_schema(), events_spec(), events_properties()
+    )
     ref rt = ctx.runtime[GhTasks]()
     var window = max(1, Int(getenv("GHARCHIVE_PARALLEL", "4")))
 
