@@ -99,14 +99,14 @@ environments:
       - conda: https://conda.modular.com/max/noarch/mblack-26.7.0-release.conda
       - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
       - conda_source: arrow-mlake-mojo[85fa2578] @ git+https://github.com/magmalake/arrow-mlake.mojo?rev=178aae6e0da0dbe105f9cb02632a51cfd35b9dda#178aae6e0da0dbe105f9cb02632a51cfd35b9dda
-      - conda_source: avro-mojo[69480caf] @ git+https://github.com/magmalake/avro.mojo?rev=db833d86ddbd7cbaba4dbd79377b0a06009181ec#db833d86ddbd7cbaba4dbd79377b0a06009181ec
+      - conda_source: avro-mojo[f30ac447] @ git+https://github.com/magmalake/avro.mojo?rev=d5b26ccefa8c49cc3af517731f5df104762119e0#d5b26ccefa8c49cc3af517731f5df104762119e0
       - conda_source: brotli-mojo[e595d9b8] @ git+https://github.com/magmalake/brotli.mojo?rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
       - conda_source: brotli-shim[e6ac61f8] @ git+https://github.com/magmalake/brotli.mojo?subdirectory=shim&rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
-      - conda_source: deflate-mojo[810db716] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
+      - conda_source: deflate-mojo[8660cf16] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
       - conda_source: dista-mojo[8321a023] @ git+https://github.com/magmalake/dista.mojo?rev=27e6e88df1b79fdc424314386a835d1d08b0db2a#27e6e88df1b79fdc424314386a835d1d08b0db2a
       - conda_source: flare_mlake[0241b88c] @ git+https://github.com/magmalake/flare_mlake?rev=b1371866a7844afefe86b25eb8af58aaa9d3fa6c#b1371866a7844afefe86b25eb8af58aaa9d3fa6c
       - conda_source: hashes-mojo[57fd9a94] @ git+https://github.com/magmalake/hashes.mojo?rev=395aca597f9410bd0511df44d972f14b10a8b01d#395aca597f9410bd0511df44d972f14b10a8b01d
-      - conda_source: iceberg-mojo[310910e9] @ git+https://github.com/magmalake/iceberg.mojo?rev=50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51#50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51
+      - conda_source: iceberg-mojo[be36e028] @ git+https://github.com/magmalake/iceberg.mojo?rev=24fe93128e4acbd903880dd9b23656f5ebc73fbc#24fe93128e4acbd903880dd9b23656f5ebc73fbc
       - conda_source: json_mlake[4288db95] @ git+https://github.com/magmalake/json_mlake?rev=bcaa7161e757748a1310a213e123bf8810ff7e96#bcaa7161e757748a1310a213e123bf8810ff7e96
       - conda_source: k8s-mojo[2c9bd502] @ git+https://github.com/magmalake/k8s.mojo?rev=6cb83ce08e02234873f2d09c7501208eedb5589f#6cb83ce08e02234873f2d09c7501208eedb5589f
       - conda_source: lz4-mojo[03f31af5] @ git+https://github.com/magmalake/lz4.mojo?rev=23cd6e54967d7e41573371507228ca5c958ca685#23cd6e54967d7e41573371507228ca5c958ca685
@@ -114,9 +114,9 @@ environments:
       - conda_source: memory-region-mojo[c0e0ffd5] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
       - conda_source: objectstore-mojo[7d1c7509] @ git+https://github.com/magmalake/objectstore.mojo?rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
       - conda_source: objectstore-shim[2602ced2] @ git+https://github.com/magmalake/objectstore.mojo?subdirectory=shim&rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
-      - conda_source: orca-mojo[2bc49804] @ git+https://github.com/magmalake/orca.mojo?rev=cd77fe7fd896d1281a6040b3ae5965728527b3d3#cd77fe7fd896d1281a6040b3ae5965728527b3d3
-      - conda_source: parquet-full-mojo[951cd2eb] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
-      - conda_source: parquet-mojo[a71394ee] @ git+https://github.com/magmalake/parquet.mojo?rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
+      - conda_source: orca-mojo[a4d1954a] @ git+https://github.com/magmalake/orca.mojo?rev=bc13c25f793753df04979b9408fa4737b0a1f63c#bc13c25f793753df04979b9408fa4737b0a1f63c
+      - conda_source: parquet-full-mojo[43e424a2] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
+      - conda_source: parquet-mojo[52081a45] @ git+https://github.com/magmalake/parquet.mojo?rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
       - conda_source: postgres-mojo[e1767212] @ git+https://github.com/magmalake/postgres.mojo?rev=324b2bb61e2e80327654abecf70fd4b2defbc50d#324b2bb61e2e80327654abecf70fd4b2defbc50d
       - conda_source: roaring-mojo[79d3f109] @ git+https://github.com/magmalake/roaring.mojo?rev=a90a7bd30cf1c21403a29059282072e93fbeeee2#a90a7bd30cf1c21403a29059282072e93fbeeee2
       - conda_source: snappy-mojo[e09281fe] @ git+https://github.com/magmalake/snappy.mojo?rev=b8172ed0a4ef13911cc225d46e26676a5b8f1ccd#b8172ed0a4ef13911cc225d46e26676a5b8f1ccd
@@ -199,14 +199,14 @@ environments:
       - conda: https://conda.modular.com/max/osx-arm64/mojo-1.2.0-release.conda
       - conda: https://conda.modular.com/max/osx-arm64/mojo-compiler-1.2.0-release.conda
       - conda_source: arrow-mlake-mojo[2bfe4ec1] @ git+https://github.com/magmalake/arrow-mlake.mojo?rev=178aae6e0da0dbe105f9cb02632a51cfd35b9dda#178aae6e0da0dbe105f9cb02632a51cfd35b9dda
-      - conda_source: avro-mojo[1fe32976] @ git+https://github.com/magmalake/avro.mojo?rev=db833d86ddbd7cbaba4dbd79377b0a06009181ec#db833d86ddbd7cbaba4dbd79377b0a06009181ec
+      - conda_source: avro-mojo[def2cbf0] @ git+https://github.com/magmalake/avro.mojo?rev=d5b26ccefa8c49cc3af517731f5df104762119e0#d5b26ccefa8c49cc3af517731f5df104762119e0
       - conda_source: brotli-mojo[8ca19112] @ git+https://github.com/magmalake/brotli.mojo?rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
       - conda_source: brotli-shim[81f6b74f] @ git+https://github.com/magmalake/brotli.mojo?subdirectory=shim&rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
-      - conda_source: deflate-mojo[60dffd1c] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
+      - conda_source: deflate-mojo[a6dade07] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
       - conda_source: dista-mojo[b5b76952] @ git+https://github.com/magmalake/dista.mojo?rev=27e6e88df1b79fdc424314386a835d1d08b0db2a#27e6e88df1b79fdc424314386a835d1d08b0db2a
       - conda_source: flare_mlake[49057abb] @ git+https://github.com/magmalake/flare_mlake?rev=b1371866a7844afefe86b25eb8af58aaa9d3fa6c#b1371866a7844afefe86b25eb8af58aaa9d3fa6c
       - conda_source: hashes-mojo[47a8abca] @ git+https://github.com/magmalake/hashes.mojo?rev=395aca597f9410bd0511df44d972f14b10a8b01d#395aca597f9410bd0511df44d972f14b10a8b01d
-      - conda_source: iceberg-mojo[00648635] @ git+https://github.com/magmalake/iceberg.mojo?rev=50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51#50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51
+      - conda_source: iceberg-mojo[6db43017] @ git+https://github.com/magmalake/iceberg.mojo?rev=24fe93128e4acbd903880dd9b23656f5ebc73fbc#24fe93128e4acbd903880dd9b23656f5ebc73fbc
       - conda_source: json_mlake[1417ba57] @ git+https://github.com/magmalake/json_mlake?rev=bcaa7161e757748a1310a213e123bf8810ff7e96#bcaa7161e757748a1310a213e123bf8810ff7e96
       - conda_source: k8s-mojo[9c367953] @ git+https://github.com/magmalake/k8s.mojo?rev=6cb83ce08e02234873f2d09c7501208eedb5589f#6cb83ce08e02234873f2d09c7501208eedb5589f
       - conda_source: lz4-mojo[0221ba9f] @ git+https://github.com/magmalake/lz4.mojo?rev=23cd6e54967d7e41573371507228ca5c958ca685#23cd6e54967d7e41573371507228ca5c958ca685
@@ -214,9 +214,9 @@ environments:
       - conda_source: memory-region-mojo[8b9c80ce] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
       - conda_source: objectstore-mojo[bf39ea9c] @ git+https://github.com/magmalake/objectstore.mojo?rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
       - conda_source: objectstore-shim[57146c0c] @ git+https://github.com/magmalake/objectstore.mojo?subdirectory=shim&rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
-      - conda_source: orca-mojo[ee1e4c87] @ git+https://github.com/magmalake/orca.mojo?rev=cd77fe7fd896d1281a6040b3ae5965728527b3d3#cd77fe7fd896d1281a6040b3ae5965728527b3d3
-      - conda_source: parquet-full-mojo[3ee42a17] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
-      - conda_source: parquet-mojo[ef244756] @ git+https://github.com/magmalake/parquet.mojo?rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
+      - conda_source: orca-mojo[cf15c978] @ git+https://github.com/magmalake/orca.mojo?rev=bc13c25f793753df04979b9408fa4737b0a1f63c#bc13c25f793753df04979b9408fa4737b0a1f63c
+      - conda_source: parquet-full-mojo[045ff62d] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
+      - conda_source: parquet-mojo[4e42e94a] @ git+https://github.com/magmalake/parquet.mojo?rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
       - conda_source: postgres-mojo[6a292a6e] @ git+https://github.com/magmalake/postgres.mojo?rev=324b2bb61e2e80327654abecf70fd4b2defbc50d#324b2bb61e2e80327654abecf70fd4b2defbc50d
       - conda_source: roaring-mojo[82ee9aaf] @ git+https://github.com/magmalake/roaring.mojo?rev=a90a7bd30cf1c21403a29059282072e93fbeeee2#a90a7bd30cf1c21403a29059282072e93fbeeee2
       - conda_source: snappy-mojo[0f0cce7d] @ git+https://github.com/magmalake/snappy.mojo?rev=b8172ed0a4ef13911cc225d46e26676a5b8f1ccd#b8172ed0a4ef13911cc225d46e26676a5b8f1ccd
@@ -2942,8 +2942,8 @@ packages:
   - conda: https://conda.modular.com/max/linux-aarch64/mojo-compiler-1.2.0-release.conda
   - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
   - conda_source: memory-region-mojo[c0e0ffd5] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
-- conda_source: avro-mojo[1fe32976] @ git+https://github.com/magmalake/avro.mojo?rev=db833d86ddbd7cbaba4dbd79377b0a06009181ec#db833d86ddbd7cbaba4dbd79377b0a06009181ec
-  version: 0.4.4
+- conda_source: avro-mojo[def2cbf0] @ git+https://github.com/magmalake/avro.mojo?rev=d5b26ccefa8c49cc3af517731f5df104762119e0#d5b26ccefa8c49cc3af517731f5df104762119e0
+  version: 0.4.5
   build: h60d57d3_0
   subdir: osx-arm64
   variants:
@@ -2954,7 +2954,7 @@ packages:
   source_depends:
     deflate-mojo:
       git: https://github.com/magmalake/deflate.mojo
-      rev: 6639b18c58fad0e009f4224ec9f792cd919398b4
+      rev: c3dfb87f5b09fb2559449dcb8b748629da4908af
   build_packages:
   - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-hbd8a1cb_0.conda
   - conda: https://conda.anaconda.org/conda-forge/noarch/python_abi-3.14-9_cp314.conda
@@ -2995,9 +2995,9 @@ packages:
   - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
   - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
   - conda: https://conda.modular.com/max/osx-arm64/mojo-compiler-1.2.0-release.conda
-  - conda_source: deflate-mojo[60dffd1c] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
-- conda_source: avro-mojo[69480caf] @ git+https://github.com/magmalake/avro.mojo?rev=db833d86ddbd7cbaba4dbd79377b0a06009181ec#db833d86ddbd7cbaba4dbd79377b0a06009181ec
-  version: 0.4.4
+  - conda_source: deflate-mojo[a6dade07] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
+- conda_source: avro-mojo[f30ac447] @ git+https://github.com/magmalake/avro.mojo?rev=d5b26ccefa8c49cc3af517731f5df104762119e0#d5b26ccefa8c49cc3af517731f5df104762119e0
+  version: 0.4.5
   build: he8cfe8b_0
   subdir: linux-aarch64
   variants:
@@ -3008,7 +3008,7 @@ packages:
   source_depends:
     deflate-mojo:
       git: https://github.com/magmalake/deflate.mojo
-      rev: 6639b18c58fad0e009f4224ec9f792cd919398b4
+      rev: c3dfb87f5b09fb2559449dcb8b748629da4908af
   build_packages:
   - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/_openmp_mutex-4.5-20_gnu.conda
   - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/bzip2-1.0.8-h4777abc_10.conda
@@ -3059,7 +3059,7 @@ packages:
   - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026e-h5d301ff_0.conda
   - conda: https://conda.modular.com/max/linux-aarch64/mojo-compiler-1.2.0-release.conda
   - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
-  - conda_source: deflate-mojo[810db716] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
+  - conda_source: deflate-mojo[8660cf16] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
 - conda_source: brotli-mojo[8ca19112] @ git+https://github.com/magmalake/brotli.mojo?rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
   version: 0.1.4
   build: h60d57d3_0
@@ -3318,56 +3318,8 @@ packages:
   - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libgcc-16.2.0-h205dda4_7.conda
   - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libgomp-16.2.0-h8acb6b2_7.conda
   - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/libstdcxx-16.2.0-hef695bb_7.conda
-- conda_source: deflate-mojo[60dffd1c] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
-  version: 0.1.3
-  build: h60d57d3_0
-  subdir: osx-arm64
-  variants:
-    target_platform: osx-arm64
-  depends:
-  - mojo-compiler >=1.2.0,<2
-  build_packages:
-  - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-hbd8a1cb_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/noarch/python_abi-3.14-9_cp314.conda
-  - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026e-h5d301ff_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/bzip2-1.0.8-h4e30115_10.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libexpat-2.9.0-h6111c0a_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libffi-3.7.0-h47dc5ef_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/liblzma-5.8.3-h8088a28_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libmpdec-4.0.0-h84a0fba_2.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libpython-3.14.10-h281bc5c_100_cp314.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libsqlite-3.54.1-h34a968b_101.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libzlib-1.3.2-h8088a28_3.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ncurses-6.6-he64c551_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/openssl-3.6.5-h55eecbc_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/python-3.14.10-h0ae1c2c_100_cp314.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/readline-8.3-h8b90a29_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/tk-8.6.13-hbeba79b_4.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-  - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
-  - conda: https://conda.modular.com/max/osx-arm64/mojo-compiler-1.2.0-release.conda
-  host_packages:
-  - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-hbd8a1cb_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/noarch/python_abi-3.14-9_cp314.conda
-  - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026e-h5d301ff_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/bzip2-1.0.8-h4e30115_10.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libexpat-2.9.0-h6111c0a_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libffi-3.7.0-h47dc5ef_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/liblzma-5.8.3-h8088a28_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libmpdec-4.0.0-h84a0fba_2.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libpython-3.14.10-h281bc5c_100_cp314.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libsqlite-3.54.1-h34a968b_101.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libzlib-1.3.2-h8088a28_3.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ncurses-6.6-he64c551_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/openssl-3.6.5-h55eecbc_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/python-3.14.10-h0ae1c2c_100_cp314.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/readline-8.3-h8b90a29_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/tk-8.6.13-hbeba79b_4.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-  - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
-  - conda: https://conda.modular.com/max/osx-arm64/mojo-compiler-1.2.0-release.conda
-- conda_source: deflate-mojo[810db716] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
-  version: 0.1.3
+- conda_source: deflate-mojo[8660cf16] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
+  version: 0.2.0
   build: he8cfe8b_0
   subdir: linux-aarch64
   variants:
@@ -3424,6 +3376,54 @@ packages:
   - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026e-h5d301ff_0.conda
   - conda: https://conda.modular.com/max/linux-aarch64/mojo-compiler-1.2.0-release.conda
   - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
+- conda_source: deflate-mojo[a6dade07] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
+  version: 0.2.0
+  build: h60d57d3_0
+  subdir: osx-arm64
+  variants:
+    target_platform: osx-arm64
+  depends:
+  - mojo-compiler >=1.2.0,<2
+  build_packages:
+  - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-hbd8a1cb_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/noarch/python_abi-3.14-9_cp314.conda
+  - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026e-h5d301ff_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/bzip2-1.0.8-h4e30115_10.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libexpat-2.9.0-h6111c0a_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libffi-3.7.0-h47dc5ef_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/liblzma-5.8.3-h8088a28_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libmpdec-4.0.0-h84a0fba_2.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libpython-3.14.10-h281bc5c_100_cp314.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libsqlite-3.54.1-h34a968b_101.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libzlib-1.3.2-h8088a28_3.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ncurses-6.6-he64c551_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/openssl-3.6.5-h55eecbc_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/python-3.14.10-h0ae1c2c_100_cp314.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/readline-8.3-h8b90a29_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/tk-8.6.13-hbeba79b_4.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
+  - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
+  - conda: https://conda.modular.com/max/osx-arm64/mojo-compiler-1.2.0-release.conda
+  host_packages:
+  - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-hbd8a1cb_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/noarch/python_abi-3.14-9_cp314.conda
+  - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026e-h5d301ff_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/bzip2-1.0.8-h4e30115_10.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libexpat-2.9.0-h6111c0a_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libffi-3.7.0-h47dc5ef_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/liblzma-5.8.3-h8088a28_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libmpdec-4.0.0-h84a0fba_2.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libpython-3.14.10-h281bc5c_100_cp314.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libsqlite-3.54.1-h34a968b_101.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libzlib-1.3.2-h8088a28_3.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ncurses-6.6-he64c551_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/openssl-3.6.5-h55eecbc_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/python-3.14.10-h0ae1c2c_100_cp314.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/readline-8.3-h8b90a29_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/tk-8.6.13-hbeba79b_4.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
+  - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
+  - conda: https://conda.modular.com/max/osx-arm64/mojo-compiler-1.2.0-release.conda
 - conda_source: dista-mojo[8321a023] @ git+https://github.com/magmalake/dista.mojo?rev=27e6e88df1b79fdc424314386a835d1d08b0db2a#27e6e88df1b79fdc424314386a835d1d08b0db2a
   version: 0.2.2
   build: he8cfe8b_0
@@ -3823,8 +3823,8 @@ packages:
   - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026e-h5d301ff_0.conda
   - conda: https://conda.modular.com/max/linux-aarch64/mojo-compiler-1.2.0-release.conda
   - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
-- conda_source: iceberg-mojo[00648635] @ git+https://github.com/magmalake/iceberg.mojo?rev=50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51#50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51
-  version: 0.9.0
+- conda_source: iceberg-mojo[6db43017] @ git+https://github.com/magmalake/iceberg.mojo?rev=24fe93128e4acbd903880dd9b23656f5ebc73fbc#24fe93128e4acbd903880dd9b23656f5ebc73fbc
+  version: 0.9.1
   build: h60d57d3_0
   subdir: osx-arm64
   variants:
@@ -3849,10 +3849,10 @@ packages:
       rev: 178aae6e0da0dbe105f9cb02632a51cfd35b9dda
     avro-mojo:
       git: https://github.com/magmalake/avro.mojo
-      rev: db833d86ddbd7cbaba4dbd79377b0a06009181ec
+      rev: d5b26ccefa8c49cc3af517731f5df104762119e0
     deflate-mojo:
       git: https://github.com/magmalake/deflate.mojo
-      rev: 6639b18c58fad0e009f4224ec9f792cd919398b4
+      rev: c3dfb87f5b09fb2559449dcb8b748629da4908af
     hashes-mojo:
       git: https://github.com/magmalake/hashes.mojo
       rev: 395aca597f9410bd0511df44d972f14b10a8b01d
@@ -3864,7 +3864,7 @@ packages:
       rev: ff66975c095f392695facc1b6dd56823dec914bc
     parquet-full-mojo:
       git: https://github.com/magmalake/parquet.mojo
-      rev: 714f66ef108716bc46ed8cdaee9d52e58bfde293
+      rev: 4cf043712aa386c1ed2403771969fb3e4c79ea2d
       subdirectory: full
     postgres-mojo:
       git: https://github.com/magmalake/postgres.mojo
@@ -3940,18 +3940,18 @@ packages:
   - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
   - conda: https://conda.modular.com/max/osx-arm64/mojo-compiler-1.2.0-release.conda
   - conda_source: arrow-mlake-mojo[2bfe4ec1] @ git+https://github.com/magmalake/arrow-mlake.mojo?rev=178aae6e0da0dbe105f9cb02632a51cfd35b9dda#178aae6e0da0dbe105f9cb02632a51cfd35b9dda
-  - conda_source: avro-mojo[1fe32976] @ git+https://github.com/magmalake/avro.mojo?rev=db833d86ddbd7cbaba4dbd79377b0a06009181ec#db833d86ddbd7cbaba4dbd79377b0a06009181ec
+  - conda_source: avro-mojo[def2cbf0] @ git+https://github.com/magmalake/avro.mojo?rev=d5b26ccefa8c49cc3af517731f5df104762119e0#d5b26ccefa8c49cc3af517731f5df104762119e0
   - conda_source: brotli-mojo[8ca19112] @ git+https://github.com/magmalake/brotli.mojo?rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
   - conda_source: brotli-shim[81f6b74f] @ git+https://github.com/magmalake/brotli.mojo?subdirectory=shim&rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
-  - conda_source: deflate-mojo[60dffd1c] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
+  - conda_source: deflate-mojo[a6dade07] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
   - conda_source: hashes-mojo[47a8abca] @ git+https://github.com/magmalake/hashes.mojo?rev=395aca597f9410bd0511df44d972f14b10a8b01d#395aca597f9410bd0511df44d972f14b10a8b01d
   - conda_source: lz4-mojo[0221ba9f] @ git+https://github.com/magmalake/lz4.mojo?rev=23cd6e54967d7e41573371507228ca5c958ca685#23cd6e54967d7e41573371507228ca5c958ca685
   - conda_source: lz4-shim[fd3796b6] @ git+https://github.com/magmalake/lz4.mojo?subdirectory=shim&rev=23cd6e54967d7e41573371507228ca5c958ca685#23cd6e54967d7e41573371507228ca5c958ca685
   - conda_source: memory-region-mojo[8b9c80ce] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
   - conda_source: objectstore-mojo[bf39ea9c] @ git+https://github.com/magmalake/objectstore.mojo?rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
   - conda_source: objectstore-shim[57146c0c] @ git+https://github.com/magmalake/objectstore.mojo?subdirectory=shim&rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
-  - conda_source: parquet-full-mojo[3ee42a17] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
-  - conda_source: parquet-mojo[ef244756] @ git+https://github.com/magmalake/parquet.mojo?rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
+  - conda_source: parquet-full-mojo[045ff62d] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
+  - conda_source: parquet-mojo[4e42e94a] @ git+https://github.com/magmalake/parquet.mojo?rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
   - conda_source: postgres-mojo[6a292a6e] @ git+https://github.com/magmalake/postgres.mojo?rev=324b2bb61e2e80327654abecf70fd4b2defbc50d#324b2bb61e2e80327654abecf70fd4b2defbc50d
   - conda_source: roaring-mojo[82ee9aaf] @ git+https://github.com/magmalake/roaring.mojo?rev=a90a7bd30cf1c21403a29059282072e93fbeeee2#a90a7bd30cf1c21403a29059282072e93fbeeee2
   - conda_source: snappy-mojo[0f0cce7d] @ git+https://github.com/magmalake/snappy.mojo?rev=b8172ed0a4ef13911cc225d46e26676a5b8f1ccd#b8172ed0a4ef13911cc225d46e26676a5b8f1ccd
@@ -3960,8 +3960,8 @@ packages:
   - conda_source: thrift-mojo[0a485ac1] @ git+https://github.com/magmalake/thrift.mojo?rev=21cdbce67d22d72e88e88a60e2f168b05b4ef9fa#21cdbce67d22d72e88e88a60e2f168b05b4ef9fa
   - conda_source: zstd-mojo[36589393] @ git+https://github.com/magmalake/zstd.mojo?rev=76190bb31012cd2d2f6712c4e1724a66474215db#76190bb31012cd2d2f6712c4e1724a66474215db
   - conda_source: zstd-shim[e834a944] @ git+https://github.com/magmalake/zstd.mojo?subdirectory=shim&rev=76190bb31012cd2d2f6712c4e1724a66474215db#76190bb31012cd2d2f6712c4e1724a66474215db
-- conda_source: iceberg-mojo[310910e9] @ git+https://github.com/magmalake/iceberg.mojo?rev=50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51#50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51
-  version: 0.9.0
+- conda_source: iceberg-mojo[be36e028] @ git+https://github.com/magmalake/iceberg.mojo?rev=24fe93128e4acbd903880dd9b23656f5ebc73fbc#24fe93128e4acbd903880dd9b23656f5ebc73fbc
+  version: 0.9.1
   build: he8cfe8b_0
   subdir: linux-aarch64
   variants:
@@ -3986,10 +3986,10 @@ packages:
       rev: 178aae6e0da0dbe105f9cb02632a51cfd35b9dda
     avro-mojo:
       git: https://github.com/magmalake/avro.mojo
-      rev: db833d86ddbd7cbaba4dbd79377b0a06009181ec
+      rev: d5b26ccefa8c49cc3af517731f5df104762119e0
     deflate-mojo:
       git: https://github.com/magmalake/deflate.mojo
-      rev: 6639b18c58fad0e009f4224ec9f792cd919398b4
+      rev: c3dfb87f5b09fb2559449dcb8b748629da4908af
     hashes-mojo:
       git: https://github.com/magmalake/hashes.mojo
       rev: 395aca597f9410bd0511df44d972f14b10a8b01d
@@ -4001,7 +4001,7 @@ packages:
       rev: ff66975c095f392695facc1b6dd56823dec914bc
     parquet-full-mojo:
       git: https://github.com/magmalake/parquet.mojo
-      rev: 714f66ef108716bc46ed8cdaee9d52e58bfde293
+      rev: 4cf043712aa386c1ed2403771969fb3e4c79ea2d
       subdirectory: full
     postgres-mojo:
       git: https://github.com/magmalake/postgres.mojo
@@ -4090,18 +4090,18 @@ packages:
   - conda: https://conda.modular.com/max/linux-aarch64/mojo-compiler-1.2.0-release.conda
   - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
   - conda_source: arrow-mlake-mojo[85fa2578] @ git+https://github.com/magmalake/arrow-mlake.mojo?rev=178aae6e0da0dbe105f9cb02632a51cfd35b9dda#178aae6e0da0dbe105f9cb02632a51cfd35b9dda
-  - conda_source: avro-mojo[69480caf] @ git+https://github.com/magmalake/avro.mojo?rev=db833d86ddbd7cbaba4dbd79377b0a06009181ec#db833d86ddbd7cbaba4dbd79377b0a06009181ec
+  - conda_source: avro-mojo[f30ac447] @ git+https://github.com/magmalake/avro.mojo?rev=d5b26ccefa8c49cc3af517731f5df104762119e0#d5b26ccefa8c49cc3af517731f5df104762119e0
   - conda_source: brotli-mojo[e595d9b8] @ git+https://github.com/magmalake/brotli.mojo?rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
   - conda_source: brotli-shim[e6ac61f8] @ git+https://github.com/magmalake/brotli.mojo?subdirectory=shim&rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
-  - conda_source: deflate-mojo[810db716] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
+  - conda_source: deflate-mojo[8660cf16] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
   - conda_source: hashes-mojo[57fd9a94] @ git+https://github.com/magmalake/hashes.mojo?rev=395aca597f9410bd0511df44d972f14b10a8b01d#395aca597f9410bd0511df44d972f14b10a8b01d
   - conda_source: lz4-mojo[03f31af5] @ git+https://github.com/magmalake/lz4.mojo?rev=23cd6e54967d7e41573371507228ca5c958ca685#23cd6e54967d7e41573371507228ca5c958ca685
   - conda_source: lz4-shim[75698e39] @ git+https://github.com/magmalake/lz4.mojo?subdirectory=shim&rev=23cd6e54967d7e41573371507228ca5c958ca685#23cd6e54967d7e41573371507228ca5c958ca685
   - conda_source: memory-region-mojo[c0e0ffd5] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
   - conda_source: objectstore-mojo[7d1c7509] @ git+https://github.com/magmalake/objectstore.mojo?rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
   - conda_source: objectstore-shim[2602ced2] @ git+https://github.com/magmalake/objectstore.mojo?subdirectory=shim&rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
-  - conda_source: parquet-full-mojo[951cd2eb] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
-  - conda_source: parquet-mojo[a71394ee] @ git+https://github.com/magmalake/parquet.mojo?rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
+  - conda_source: parquet-full-mojo[43e424a2] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
+  - conda_source: parquet-mojo[52081a45] @ git+https://github.com/magmalake/parquet.mojo?rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
   - conda_source: postgres-mojo[e1767212] @ git+https://github.com/magmalake/postgres.mojo?rev=324b2bb61e2e80327654abecf70fd4b2defbc50d#324b2bb61e2e80327654abecf70fd4b2defbc50d
   - conda_source: roaring-mojo[79d3f109] @ git+https://github.com/magmalake/roaring.mojo?rev=a90a7bd30cf1c21403a29059282072e93fbeeee2#a90a7bd30cf1c21403a29059282072e93fbeeee2
   - conda_source: snappy-mojo[e09281fe] @ git+https://github.com/magmalake/snappy.mojo?rev=b8172ed0a4ef13911cc225d46e26676a5b8f1ccd#b8172ed0a4ef13911cc225d46e26676a5b8f1ccd
@@ -5019,8 +5019,8 @@ packages:
   - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ncurses-6.6-he64c551_1.conda
   - conda: https://conda.anaconda.org/conda-forge/osx-arm64/openssl-3.6.5-h55eecbc_0.conda
   - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-- conda_source: orca-mojo[2bc49804] @ git+https://github.com/magmalake/orca.mojo?rev=cd77fe7fd896d1281a6040b3ae5965728527b3d3#cd77fe7fd896d1281a6040b3ae5965728527b3d3
-  version: 0.3.4
+- conda_source: orca-mojo[a4d1954a] @ git+https://github.com/magmalake/orca.mojo?rev=bc13c25f793753df04979b9408fa4737b0a1f63c#bc13c25f793753df04979b9408fa4737b0a1f63c
+  version: 0.3.5
   build: he8cfe8b_0
   subdir: linux-aarch64
   variants:
@@ -5052,7 +5052,7 @@ packages:
       rev: b1371866a7844afefe86b25eb8af58aaa9d3fa6c
     iceberg-mojo:
       git: https://github.com/magmalake/iceberg.mojo
-      rev: 50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51
+      rev: 24fe93128e4acbd903880dd9b23656f5ebc73fbc
     json_mlake:
       git: https://github.com/magmalake/json_mlake
       rev: bcaa7161e757748a1310a213e123bf8810ff7e96
@@ -5171,14 +5171,14 @@ packages:
   - conda: https://conda.modular.com/max/noarch/mblack-26.7.0-release.conda
   - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
   - conda_source: arrow-mlake-mojo[85fa2578] @ git+https://github.com/magmalake/arrow-mlake.mojo?rev=178aae6e0da0dbe105f9cb02632a51cfd35b9dda#178aae6e0da0dbe105f9cb02632a51cfd35b9dda
-  - conda_source: avro-mojo[69480caf] @ git+https://github.com/magmalake/avro.mojo?rev=db833d86ddbd7cbaba4dbd79377b0a06009181ec#db833d86ddbd7cbaba4dbd79377b0a06009181ec
+  - conda_source: avro-mojo[f30ac447] @ git+https://github.com/magmalake/avro.mojo?rev=d5b26ccefa8c49cc3af517731f5df104762119e0#d5b26ccefa8c49cc3af517731f5df104762119e0
   - conda_source: brotli-mojo[e595d9b8] @ git+https://github.com/magmalake/brotli.mojo?rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
   - conda_source: brotli-shim[e6ac61f8] @ git+https://github.com/magmalake/brotli.mojo?subdirectory=shim&rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
-  - conda_source: deflate-mojo[810db716] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
+  - conda_source: deflate-mojo[8660cf16] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
   - conda_source: dista-mojo[8321a023] @ git+https://github.com/magmalake/dista.mojo?rev=27e6e88df1b79fdc424314386a835d1d08b0db2a#27e6e88df1b79fdc424314386a835d1d08b0db2a
   - conda_source: flare_mlake[0241b88c] @ git+https://github.com/magmalake/flare_mlake?rev=b1371866a7844afefe86b25eb8af58aaa9d3fa6c#b1371866a7844afefe86b25eb8af58aaa9d3fa6c
   - conda_source: hashes-mojo[57fd9a94] @ git+https://github.com/magmalake/hashes.mojo?rev=395aca597f9410bd0511df44d972f14b10a8b01d#395aca597f9410bd0511df44d972f14b10a8b01d
-  - conda_source: iceberg-mojo[310910e9] @ git+https://github.com/magmalake/iceberg.mojo?rev=50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51#50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51
+  - conda_source: iceberg-mojo[be36e028] @ git+https://github.com/magmalake/iceberg.mojo?rev=24fe93128e4acbd903880dd9b23656f5ebc73fbc#24fe93128e4acbd903880dd9b23656f5ebc73fbc
   - conda_source: json_mlake[4288db95] @ git+https://github.com/magmalake/json_mlake?rev=bcaa7161e757748a1310a213e123bf8810ff7e96#bcaa7161e757748a1310a213e123bf8810ff7e96
   - conda_source: k8s-mojo[2c9bd502] @ git+https://github.com/magmalake/k8s.mojo?rev=6cb83ce08e02234873f2d09c7501208eedb5589f#6cb83ce08e02234873f2d09c7501208eedb5589f
   - conda_source: lz4-mojo[03f31af5] @ git+https://github.com/magmalake/lz4.mojo?rev=23cd6e54967d7e41573371507228ca5c958ca685#23cd6e54967d7e41573371507228ca5c958ca685
@@ -5186,8 +5186,8 @@ packages:
   - conda_source: memory-region-mojo[c0e0ffd5] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
   - conda_source: objectstore-mojo[7d1c7509] @ git+https://github.com/magmalake/objectstore.mojo?rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
   - conda_source: objectstore-shim[2602ced2] @ git+https://github.com/magmalake/objectstore.mojo?subdirectory=shim&rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
-  - conda_source: parquet-full-mojo[951cd2eb] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
-  - conda_source: parquet-mojo[a71394ee] @ git+https://github.com/magmalake/parquet.mojo?rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
+  - conda_source: parquet-full-mojo[43e424a2] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
+  - conda_source: parquet-mojo[52081a45] @ git+https://github.com/magmalake/parquet.mojo?rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
   - conda_source: postgres-mojo[e1767212] @ git+https://github.com/magmalake/postgres.mojo?rev=324b2bb61e2e80327654abecf70fd4b2defbc50d#324b2bb61e2e80327654abecf70fd4b2defbc50d
   - conda_source: roaring-mojo[79d3f109] @ git+https://github.com/magmalake/roaring.mojo?rev=a90a7bd30cf1c21403a29059282072e93fbeeee2#a90a7bd30cf1c21403a29059282072e93fbeeee2
   - conda_source: snappy-mojo[e09281fe] @ git+https://github.com/magmalake/snappy.mojo?rev=b8172ed0a4ef13911cc225d46e26676a5b8f1ccd#b8172ed0a4ef13911cc225d46e26676a5b8f1ccd
@@ -5196,8 +5196,8 @@ packages:
   - conda_source: thrift-mojo[5f9111c9] @ git+https://github.com/magmalake/thrift.mojo?rev=21cdbce67d22d72e88e88a60e2f168b05b4ef9fa#21cdbce67d22d72e88e88a60e2f168b05b4ef9fa
   - conda_source: zstd-mojo[d9c588bc] @ git+https://github.com/magmalake/zstd.mojo?rev=76190bb31012cd2d2f6712c4e1724a66474215db#76190bb31012cd2d2f6712c4e1724a66474215db
   - conda_source: zstd-shim[d55ce47a] @ git+https://github.com/magmalake/zstd.mojo?subdirectory=shim&rev=76190bb31012cd2d2f6712c4e1724a66474215db#76190bb31012cd2d2f6712c4e1724a66474215db
-- conda_source: orca-mojo[ee1e4c87] @ git+https://github.com/magmalake/orca.mojo?rev=cd77fe7fd896d1281a6040b3ae5965728527b3d3#cd77fe7fd896d1281a6040b3ae5965728527b3d3
-  version: 0.3.4
+- conda_source: orca-mojo[cf15c978] @ git+https://github.com/magmalake/orca.mojo?rev=bc13c25f793753df04979b9408fa4737b0a1f63c#bc13c25f793753df04979b9408fa4737b0a1f63c
+  version: 0.3.5
   build: h60d57d3_0
   subdir: osx-arm64
   variants:
@@ -5229,7 +5229,7 @@ packages:
       rev: b1371866a7844afefe86b25eb8af58aaa9d3fa6c
     iceberg-mojo:
       git: https://github.com/magmalake/iceberg.mojo
-      rev: 50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51
+      rev: 24fe93128e4acbd903880dd9b23656f5ebc73fbc
     json_mlake:
       git: https://github.com/magmalake/json_mlake
       rev: bcaa7161e757748a1310a213e123bf8810ff7e96
@@ -5335,14 +5335,14 @@ packages:
   - conda: https://conda.modular.com/max/osx-arm64/mojo-1.2.0-release.conda
   - conda: https://conda.modular.com/max/osx-arm64/mojo-compiler-1.2.0-release.conda
   - conda_source: arrow-mlake-mojo[2bfe4ec1] @ git+https://github.com/magmalake/arrow-mlake.mojo?rev=178aae6e0da0dbe105f9cb02632a51cfd35b9dda#178aae6e0da0dbe105f9cb02632a51cfd35b9dda
-  - conda_source: avro-mojo[1fe32976] @ git+https://github.com/magmalake/avro.mojo?rev=db833d86ddbd7cbaba4dbd79377b0a06009181ec#db833d86ddbd7cbaba4dbd79377b0a06009181ec
+  - conda_source: avro-mojo[def2cbf0] @ git+https://github.com/magmalake/avro.mojo?rev=d5b26ccefa8c49cc3af517731f5df104762119e0#d5b26ccefa8c49cc3af517731f5df104762119e0
   - conda_source: brotli-mojo[8ca19112] @ git+https://github.com/magmalake/brotli.mojo?rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
   - conda_source: brotli-shim[81f6b74f] @ git+https://github.com/magmalake/brotli.mojo?subdirectory=shim&rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
-  - conda_source: deflate-mojo[60dffd1c] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
+  - conda_source: deflate-mojo[a6dade07] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
   - conda_source: dista-mojo[b5b76952] @ git+https://github.com/magmalake/dista.mojo?rev=27e6e88df1b79fdc424314386a835d1d08b0db2a#27e6e88df1b79fdc424314386a835d1d08b0db2a
   - conda_source: flare_mlake[49057abb] @ git+https://github.com/magmalake/flare_mlake?rev=b1371866a7844afefe86b25eb8af58aaa9d3fa6c#b1371866a7844afefe86b25eb8af58aaa9d3fa6c
   - conda_source: hashes-mojo[47a8abca] @ git+https://github.com/magmalake/hashes.mojo?rev=395aca597f9410bd0511df44d972f14b10a8b01d#395aca597f9410bd0511df44d972f14b10a8b01d
-  - conda_source: iceberg-mojo[00648635] @ git+https://github.com/magmalake/iceberg.mojo?rev=50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51#50eb8dc18835e4e1c8ed9d7a0ab19d31f9a1ad51
+  - conda_source: iceberg-mojo[6db43017] @ git+https://github.com/magmalake/iceberg.mojo?rev=24fe93128e4acbd903880dd9b23656f5ebc73fbc#24fe93128e4acbd903880dd9b23656f5ebc73fbc
   - conda_source: json_mlake[1417ba57] @ git+https://github.com/magmalake/json_mlake?rev=bcaa7161e757748a1310a213e123bf8810ff7e96#bcaa7161e757748a1310a213e123bf8810ff7e96
   - conda_source: k8s-mojo[9c367953] @ git+https://github.com/magmalake/k8s.mojo?rev=6cb83ce08e02234873f2d09c7501208eedb5589f#6cb83ce08e02234873f2d09c7501208eedb5589f
   - conda_source: lz4-mojo[0221ba9f] @ git+https://github.com/magmalake/lz4.mojo?rev=23cd6e54967d7e41573371507228ca5c958ca685#23cd6e54967d7e41573371507228ca5c958ca685
@@ -5350,8 +5350,8 @@ packages:
   - conda_source: memory-region-mojo[8b9c80ce] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
   - conda_source: objectstore-mojo[bf39ea9c] @ git+https://github.com/magmalake/objectstore.mojo?rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
   - conda_source: objectstore-shim[57146c0c] @ git+https://github.com/magmalake/objectstore.mojo?subdirectory=shim&rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
-  - conda_source: parquet-full-mojo[3ee42a17] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
-  - conda_source: parquet-mojo[ef244756] @ git+https://github.com/magmalake/parquet.mojo?rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
+  - conda_source: parquet-full-mojo[045ff62d] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
+  - conda_source: parquet-mojo[4e42e94a] @ git+https://github.com/magmalake/parquet.mojo?rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
   - conda_source: postgres-mojo[6a292a6e] @ git+https://github.com/magmalake/postgres.mojo?rev=324b2bb61e2e80327654abecf70fd4b2defbc50d#324b2bb61e2e80327654abecf70fd4b2defbc50d
   - conda_source: roaring-mojo[82ee9aaf] @ git+https://github.com/magmalake/roaring.mojo?rev=a90a7bd30cf1c21403a29059282072e93fbeeee2#a90a7bd30cf1c21403a29059282072e93fbeeee2
   - conda_source: snappy-mojo[0f0cce7d] @ git+https://github.com/magmalake/snappy.mojo?rev=b8172ed0a4ef13911cc225d46e26676a5b8f1ccd#b8172ed0a4ef13911cc225d46e26676a5b8f1ccd
@@ -5360,8 +5360,8 @@ packages:
   - conda_source: thrift-mojo[0a485ac1] @ git+https://github.com/magmalake/thrift.mojo?rev=21cdbce67d22d72e88e88a60e2f168b05b4ef9fa#21cdbce67d22d72e88e88a60e2f168b05b4ef9fa
   - conda_source: zstd-mojo[36589393] @ git+https://github.com/magmalake/zstd.mojo?rev=76190bb31012cd2d2f6712c4e1724a66474215db#76190bb31012cd2d2f6712c4e1724a66474215db
   - conda_source: zstd-shim[e834a944] @ git+https://github.com/magmalake/zstd.mojo?subdirectory=shim&rev=76190bb31012cd2d2f6712c4e1724a66474215db#76190bb31012cd2d2f6712c4e1724a66474215db
-- conda_source: parquet-full-mojo[3ee42a17] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
-  version: 0.1.9
+- conda_source: parquet-full-mojo[045ff62d] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
+  version: 0.1.10
   build: h60d57d3_0
   subdir: osx-arm64
   variants:
@@ -5440,19 +5440,19 @@ packages:
   - conda_source: arrow-mlake-mojo[2bfe4ec1] @ git+https://github.com/magmalake/arrow-mlake.mojo?rev=178aae6e0da0dbe105f9cb02632a51cfd35b9dda#178aae6e0da0dbe105f9cb02632a51cfd35b9dda
   - conda_source: brotli-mojo[8ca19112] @ git+https://github.com/magmalake/brotli.mojo?rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
   - conda_source: brotli-shim[81f6b74f] @ git+https://github.com/magmalake/brotli.mojo?subdirectory=shim&rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
-  - conda_source: deflate-mojo[60dffd1c] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
+  - conda_source: deflate-mojo[a6dade07] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
   - conda_source: hashes-mojo[47a8abca] @ git+https://github.com/magmalake/hashes.mojo?rev=395aca597f9410bd0511df44d972f14b10a8b01d#395aca597f9410bd0511df44d972f14b10a8b01d
   - conda_source: lz4-mojo[0221ba9f] @ git+https://github.com/magmalake/lz4.mojo?rev=23cd6e54967d7e41573371507228ca5c958ca685#23cd6e54967d7e41573371507228ca5c958ca685
   - conda_source: lz4-shim[fd3796b6] @ git+https://github.com/magmalake/lz4.mojo?subdirectory=shim&rev=23cd6e54967d7e41573371507228ca5c958ca685#23cd6e54967d7e41573371507228ca5c958ca685
   - conda_source: memory-region-mojo[8b9c80ce] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
-  - conda_source: parquet-mojo[ef244756] @ git+https://github.com/magmalake/parquet.mojo?rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
+  - conda_source: parquet-mojo[4e42e94a] @ git+https://github.com/magmalake/parquet.mojo?rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
   - conda_source: snappy-mojo[0f0cce7d] @ git+https://github.com/magmalake/snappy.mojo?rev=b8172ed0a4ef13911cc225d46e26676a5b8f1ccd#b8172ed0a4ef13911cc225d46e26676a5b8f1ccd
   - conda_source: threads-mojo[ec86bfa8] @ git+https://github.com/magmalake/threads.mojo?rev=f45e780a8de77278c140cee36904e46e93e0ca1c#f45e780a8de77278c140cee36904e46e93e0ca1c
   - conda_source: thrift-mojo[0a485ac1] @ git+https://github.com/magmalake/thrift.mojo?rev=21cdbce67d22d72e88e88a60e2f168b05b4ef9fa#21cdbce67d22d72e88e88a60e2f168b05b4ef9fa
   - conda_source: zstd-mojo[36589393] @ git+https://github.com/magmalake/zstd.mojo?rev=76190bb31012cd2d2f6712c4e1724a66474215db#76190bb31012cd2d2f6712c4e1724a66474215db
   - conda_source: zstd-shim[e834a944] @ git+https://github.com/magmalake/zstd.mojo?subdirectory=shim&rev=76190bb31012cd2d2f6712c4e1724a66474215db#76190bb31012cd2d2f6712c4e1724a66474215db
-- conda_source: parquet-full-mojo[951cd2eb] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
-  version: 0.1.9
+- conda_source: parquet-full-mojo[43e424a2] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
+  version: 0.1.10
   build: he8cfe8b_0
   subdir: linux-aarch64
   variants:
@@ -5541,19 +5541,99 @@ packages:
   - conda_source: arrow-mlake-mojo[85fa2578] @ git+https://github.com/magmalake/arrow-mlake.mojo?rev=178aae6e0da0dbe105f9cb02632a51cfd35b9dda#178aae6e0da0dbe105f9cb02632a51cfd35b9dda
   - conda_source: brotli-mojo[e595d9b8] @ git+https://github.com/magmalake/brotli.mojo?rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
   - conda_source: brotli-shim[e6ac61f8] @ git+https://github.com/magmalake/brotli.mojo?subdirectory=shim&rev=dcbf840d22e3deaf24c587d12d28570a9a882b7f#dcbf840d22e3deaf24c587d12d28570a9a882b7f
-  - conda_source: deflate-mojo[810db716] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
+  - conda_source: deflate-mojo[8660cf16] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
   - conda_source: hashes-mojo[57fd9a94] @ git+https://github.com/magmalake/hashes.mojo?rev=395aca597f9410bd0511df44d972f14b10a8b01d#395aca597f9410bd0511df44d972f14b10a8b01d
   - conda_source: lz4-mojo[03f31af5] @ git+https://github.com/magmalake/lz4.mojo?rev=23cd6e54967d7e41573371507228ca5c958ca685#23cd6e54967d7e41573371507228ca5c958ca685
   - conda_source: lz4-shim[75698e39] @ git+https://github.com/magmalake/lz4.mojo?subdirectory=shim&rev=23cd6e54967d7e41573371507228ca5c958ca685#23cd6e54967d7e41573371507228ca5c958ca685
   - conda_source: memory-region-mojo[c0e0ffd5] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
-  - conda_source: parquet-mojo[a71394ee] @ git+https://github.com/magmalake/parquet.mojo?rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
+  - conda_source: parquet-mojo[52081a45] @ git+https://github.com/magmalake/parquet.mojo?rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
   - conda_source: snappy-mojo[e09281fe] @ git+https://github.com/magmalake/snappy.mojo?rev=b8172ed0a4ef13911cc225d46e26676a5b8f1ccd#b8172ed0a4ef13911cc225d46e26676a5b8f1ccd
   - conda_source: threads-mojo[f2581679] @ git+https://github.com/magmalake/threads.mojo?rev=f45e780a8de77278c140cee36904e46e93e0ca1c#f45e780a8de77278c140cee36904e46e93e0ca1c
   - conda_source: thrift-mojo[5f9111c9] @ git+https://github.com/magmalake/thrift.mojo?rev=21cdbce67d22d72e88e88a60e2f168b05b4ef9fa#21cdbce67d22d72e88e88a60e2f168b05b4ef9fa
   - conda_source: zstd-mojo[d9c588bc] @ git+https://github.com/magmalake/zstd.mojo?rev=76190bb31012cd2d2f6712c4e1724a66474215db#76190bb31012cd2d2f6712c4e1724a66474215db
   - conda_source: zstd-shim[d55ce47a] @ git+https://github.com/magmalake/zstd.mojo?subdirectory=shim&rev=76190bb31012cd2d2f6712c4e1724a66474215db#76190bb31012cd2d2f6712c4e1724a66474215db
-- conda_source: parquet-mojo[a71394ee] @ git+https://github.com/magmalake/parquet.mojo?rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
-  version: 0.12.0
+- conda_source: parquet-mojo[4e42e94a] @ git+https://github.com/magmalake/parquet.mojo?rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
+  version: 0.12.1
+  build: h60d57d3_0
+  subdir: osx-arm64
+  variants:
+    target_platform: osx-arm64
+  depends:
+  - mojo-compiler >=1.2.0,<2
+  - arrow-mlake-mojo
+  - threads-mojo
+  - thrift-mojo
+  - hashes-mojo
+  - snappy-mojo
+  - deflate-mojo
+  source_depends:
+    arrow-mlake-mojo:
+      git: https://github.com/magmalake/arrow-mlake.mojo
+      rev: 178aae6e0da0dbe105f9cb02632a51cfd35b9dda
+    deflate-mojo:
+      git: https://github.com/magmalake/deflate.mojo
+      rev: c3dfb87f5b09fb2559449dcb8b748629da4908af
+    hashes-mojo:
+      git: https://github.com/magmalake/hashes.mojo
+      rev: 395aca597f9410bd0511df44d972f14b10a8b01d
+    snappy-mojo:
+      git: https://github.com/magmalake/snappy.mojo
+      rev: b8172ed0a4ef13911cc225d46e26676a5b8f1ccd
+    threads-mojo:
+      git: https://github.com/magmalake/threads.mojo
+      rev: f45e780a8de77278c140cee36904e46e93e0ca1c
+    thrift-mojo:
+      git: https://github.com/magmalake/thrift.mojo
+      rev: 21cdbce67d22d72e88e88a60e2f168b05b4ef9fa
+  build_packages:
+  - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-hbd8a1cb_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/noarch/python_abi-3.14-9_cp314.conda
+  - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026e-h5d301ff_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/bzip2-1.0.8-h4e30115_10.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libexpat-2.9.0-h6111c0a_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libffi-3.7.0-h47dc5ef_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/liblzma-5.8.3-h8088a28_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libmpdec-4.0.0-h84a0fba_2.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libpython-3.14.10-h281bc5c_100_cp314.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libsqlite-3.54.1-h34a968b_101.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libzlib-1.3.2-h8088a28_3.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ncurses-6.6-he64c551_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/openssl-3.6.5-h55eecbc_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/python-3.14.10-h0ae1c2c_100_cp314.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/readline-8.3-h8b90a29_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/tk-8.6.13-hbeba79b_4.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
+  - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
+  - conda: https://conda.modular.com/max/osx-arm64/mojo-compiler-1.2.0-release.conda
+  host_packages:
+  - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-hbd8a1cb_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/noarch/python_abi-3.14-9_cp314.conda
+  - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026e-h5d301ff_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/bzip2-1.0.8-h4e30115_10.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libexpat-2.9.0-h6111c0a_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libffi-3.7.0-h47dc5ef_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/liblzma-5.8.3-h8088a28_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libmpdec-4.0.0-h84a0fba_2.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libpython-3.14.10-h281bc5c_100_cp314.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libsqlite-3.54.1-h34a968b_101.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libzlib-1.3.2-h8088a28_3.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ncurses-6.6-he64c551_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/openssl-3.6.5-h55eecbc_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/python-3.14.10-h0ae1c2c_100_cp314.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/readline-8.3-h8b90a29_1.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/tk-8.6.13-hbeba79b_4.conda
+  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
+  - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
+  - conda: https://conda.modular.com/max/osx-arm64/mojo-compiler-1.2.0-release.conda
+  - conda_source: arrow-mlake-mojo[2bfe4ec1] @ git+https://github.com/magmalake/arrow-mlake.mojo?rev=178aae6e0da0dbe105f9cb02632a51cfd35b9dda#178aae6e0da0dbe105f9cb02632a51cfd35b9dda
+  - conda_source: deflate-mojo[a6dade07] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
+  - conda_source: hashes-mojo[47a8abca] @ git+https://github.com/magmalake/hashes.mojo?rev=395aca597f9410bd0511df44d972f14b10a8b01d#395aca597f9410bd0511df44d972f14b10a8b01d
+  - conda_source: memory-region-mojo[8b9c80ce] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
+  - conda_source: snappy-mojo[0f0cce7d] @ git+https://github.com/magmalake/snappy.mojo?rev=b8172ed0a4ef13911cc225d46e26676a5b8f1ccd#b8172ed0a4ef13911cc225d46e26676a5b8f1ccd
+  - conda_source: threads-mojo[ec86bfa8] @ git+https://github.com/magmalake/threads.mojo?rev=f45e780a8de77278c140cee36904e46e93e0ca1c#f45e780a8de77278c140cee36904e46e93e0ca1c
+  - conda_source: thrift-mojo[0a485ac1] @ git+https://github.com/magmalake/thrift.mojo?rev=21cdbce67d22d72e88e88a60e2f168b05b4ef9fa#21cdbce67d22d72e88e88a60e2f168b05b4ef9fa
+- conda_source: parquet-mojo[52081a45] @ git+https://github.com/magmalake/parquet.mojo?rev=4cf043712aa386c1ed2403771969fb3e4c79ea2d#4cf043712aa386c1ed2403771969fb3e4c79ea2d
+  version: 0.12.1
   build: he8cfe8b_0
   subdir: linux-aarch64
   variants:
@@ -5572,7 +5652,7 @@ packages:
       rev: 178aae6e0da0dbe105f9cb02632a51cfd35b9dda
     deflate-mojo:
       git: https://github.com/magmalake/deflate.mojo
-      rev: 6639b18c58fad0e009f4224ec9f792cd919398b4
+      rev: c3dfb87f5b09fb2559449dcb8b748629da4908af
     hashes-mojo:
       git: https://github.com/magmalake/hashes.mojo
       rev: 395aca597f9410bd0511df44d972f14b10a8b01d
@@ -5636,92 +5716,12 @@ packages:
   - conda: https://conda.modular.com/max/linux-aarch64/mojo-compiler-1.2.0-release.conda
   - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
   - conda_source: arrow-mlake-mojo[85fa2578] @ git+https://github.com/magmalake/arrow-mlake.mojo?rev=178aae6e0da0dbe105f9cb02632a51cfd35b9dda#178aae6e0da0dbe105f9cb02632a51cfd35b9dda
-  - conda_source: deflate-mojo[810db716] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
+  - conda_source: deflate-mojo[8660cf16] @ git+https://github.com/magmalake/deflate.mojo?rev=c3dfb87f5b09fb2559449dcb8b748629da4908af#c3dfb87f5b09fb2559449dcb8b748629da4908af
   - conda_source: hashes-mojo[57fd9a94] @ git+https://github.com/magmalake/hashes.mojo?rev=395aca597f9410bd0511df44d972f14b10a8b01d#395aca597f9410bd0511df44d972f14b10a8b01d
   - conda_source: memory-region-mojo[c0e0ffd5] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
   - conda_source: snappy-mojo[e09281fe] @ git+https://github.com/magmalake/snappy.mojo?rev=b8172ed0a4ef13911cc225d46e26676a5b8f1ccd#b8172ed0a4ef13911cc225d46e26676a5b8f1ccd
   - conda_source: threads-mojo[f2581679] @ git+https://github.com/magmalake/threads.mojo?rev=f45e780a8de77278c140cee36904e46e93e0ca1c#f45e780a8de77278c140cee36904e46e93e0ca1c
   - conda_source: thrift-mojo[5f9111c9] @ git+https://github.com/magmalake/thrift.mojo?rev=21cdbce67d22d72e88e88a60e2f168b05b4ef9fa#21cdbce67d22d72e88e88a60e2f168b05b4ef9fa
-- conda_source: parquet-mojo[ef244756] @ git+https://github.com/magmalake/parquet.mojo?rev=714f66ef108716bc46ed8cdaee9d52e58bfde293#714f66ef108716bc46ed8cdaee9d52e58bfde293
-  version: 0.12.0
-  build: h60d57d3_0
-  subdir: osx-arm64
-  variants:
-    target_platform: osx-arm64
-  depends:
-  - mojo-compiler >=1.2.0,<2
-  - arrow-mlake-mojo
-  - threads-mojo
-  - thrift-mojo
-  - hashes-mojo
-  - snappy-mojo
-  - deflate-mojo
-  source_depends:
-    arrow-mlake-mojo:
-      git: https://github.com/magmalake/arrow-mlake.mojo
-      rev: 178aae6e0da0dbe105f9cb02632a51cfd35b9dda
-    deflate-mojo:
-      git: https://github.com/magmalake/deflate.mojo
-      rev: 6639b18c58fad0e009f4224ec9f792cd919398b4
-    hashes-mojo:
-      git: https://github.com/magmalake/hashes.mojo
-      rev: 395aca597f9410bd0511df44d972f14b10a8b01d
-    snappy-mojo:
-      git: https://github.com/magmalake/snappy.mojo
-      rev: b8172ed0a4ef13911cc225d46e26676a5b8f1ccd
-    threads-mojo:
-      git: https://github.com/magmalake/threads.mojo
-      rev: f45e780a8de77278c140cee36904e46e93e0ca1c
-    thrift-mojo:
-      git: https://github.com/magmalake/thrift.mojo
-      rev: 21cdbce67d22d72e88e88a60e2f168b05b4ef9fa
-  build_packages:
-  - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-hbd8a1cb_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/noarch/python_abi-3.14-9_cp314.conda
-  - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026e-h5d301ff_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/bzip2-1.0.8-h4e30115_10.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libexpat-2.9.0-h6111c0a_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libffi-3.7.0-h47dc5ef_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/liblzma-5.8.3-h8088a28_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libmpdec-4.0.0-h84a0fba_2.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libpython-3.14.10-h281bc5c_100_cp314.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libsqlite-3.54.1-h34a968b_101.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libzlib-1.3.2-h8088a28_3.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ncurses-6.6-he64c551_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/openssl-3.6.5-h55eecbc_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/python-3.14.10-h0ae1c2c_100_cp314.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/readline-8.3-h8b90a29_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/tk-8.6.13-hbeba79b_4.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-  - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
-  - conda: https://conda.modular.com/max/osx-arm64/mojo-compiler-1.2.0-release.conda
-  host_packages:
-  - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-hbd8a1cb_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/noarch/python_abi-3.14-9_cp314.conda
-  - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2026e-h5d301ff_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/bzip2-1.0.8-h4e30115_10.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libexpat-2.9.0-h6111c0a_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libffi-3.7.0-h47dc5ef_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/liblzma-5.8.3-h8088a28_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libmpdec-4.0.0-h84a0fba_2.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libpython-3.14.10-h281bc5c_100_cp314.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libsqlite-3.54.1-h34a968b_101.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/libzlib-1.3.2-h8088a28_3.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ncurses-6.6-he64c551_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/openssl-3.6.5-h55eecbc_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/python-3.14.10-h0ae1c2c_100_cp314.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/readline-8.3-h8b90a29_1.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/tk-8.6.13-hbeba79b_4.conda
-  - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-  - conda: https://conda.modular.com/max/noarch/mojo-python-1.2.0-release.conda
-  - conda: https://conda.modular.com/max/osx-arm64/mojo-compiler-1.2.0-release.conda
-  - conda_source: arrow-mlake-mojo[2bfe4ec1] @ git+https://github.com/magmalake/arrow-mlake.mojo?rev=178aae6e0da0dbe105f9cb02632a51cfd35b9dda#178aae6e0da0dbe105f9cb02632a51cfd35b9dda
-  - conda_source: deflate-mojo[60dffd1c] @ git+https://github.com/magmalake/deflate.mojo?rev=6639b18c58fad0e009f4224ec9f792cd919398b4#6639b18c58fad0e009f4224ec9f792cd919398b4
-  - conda_source: hashes-mojo[47a8abca] @ git+https://github.com/magmalake/hashes.mojo?rev=395aca597f9410bd0511df44d972f14b10a8b01d#395aca597f9410bd0511df44d972f14b10a8b01d
-  - conda_source: memory-region-mojo[8b9c80ce] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
-  - conda_source: snappy-mojo[0f0cce7d] @ git+https://github.com/magmalake/snappy.mojo?rev=b8172ed0a4ef13911cc225d46e26676a5b8f1ccd#b8172ed0a4ef13911cc225d46e26676a5b8f1ccd
-  - conda_source: threads-mojo[ec86bfa8] @ git+https://github.com/magmalake/threads.mojo?rev=f45e780a8de77278c140cee36904e46e93e0ca1c#f45e780a8de77278c140cee36904e46e93e0ca1c
-  - conda_source: thrift-mojo[0a485ac1] @ git+https://github.com/magmalake/thrift.mojo?rev=21cdbce67d22d72e88e88a60e2f168b05b4ef9fa#21cdbce67d22d72e88e88a60e2f168b05b4ef9fa
 - conda_source: postgres-mojo[6a292a6e] @ git+https://github.com/magmalake/postgres.mojo?rev=324b2bb61e2e80327654abecf70fd4b2defbc50d#324b2bb61e2e80327654abecf70fd4b2defbc50d
   version: 0.3.3
   build: h60d57d3_0

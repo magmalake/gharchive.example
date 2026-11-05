@@ -19,9 +19,14 @@ from std.os import getenv, setenv
 from std.time import perf_counter_ns
 
 from dista import ObjectRef, Task2
-from iceberg.commit import FileChanges
 from orca import Cron, Ctx, Daily, Day, Mapped, Pipeline, Step, Tasks, orca_main
-from orca.tables import append, commit, ensure_table, find_commit, load_dataset
+from orca.tables import (
+    append,
+    append_files,
+    ensure_table,
+    find_commit,
+    load_dataset,
+)
 from parquet import RecordBatch
 
 from datafiles import DataFiles
@@ -72,12 +77,9 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
         var t0 = perf_counter_ns()
         var id: Int64
         try:
-            if len(got.files) == 0:
-                id = append(ctx, table, List[RecordBatch]())
-            else:
-                var changes = FileChanges()
-                changes.added_data = got.files.copy()
-                id = commit(ctx, table, "append", changes^)
+            # An hour with no files still commits a snapshot, which keeps
+            # the numbering aligned.
+            id = append_files(ctx, table, got.files)
         except e:
             raise Error(day, " hour ", hours[i], ": committing: ", e)
         var commit_ms = Int(perf_counter_ns() - t0) // 1_000_000

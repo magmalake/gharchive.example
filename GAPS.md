@@ -325,7 +325,7 @@ an hour or needs reading library source), **low** (friction).
   tzdata, zlib, ...), not the tins and their pinned versions.
 - **Fix:** mojoshelf: list only the tins, with version and rev.
 
-## 20. deflate-mojo can't inflate a stream a window at a time (medium)
+## 20. deflate-mojo can't inflate a stream a window at a time (medium; fixed in deflate-mojo 0.2.0)
 
 - **Tried:** to decode an hour of GH Archive (one gzip member, ~65 MB in,
   ~500 MB of JSON out) a window at a time, parsing lines as they come, so
@@ -348,7 +348,12 @@ an hour or needs reading library source), **low** (friction).
   `GzipReader` with `feed`/`read_into` or `run`/`compact` like this one),
   and the eight-byte match copy in `_Out.copy_match`.
 
-## 21. Writing data files on a dista worker: no codec for `DataFile`, no "append these files" in orca (medium)
+- **Resolved:** deflate-mojo 0.2.0 has `GzipReader` and `Inflater`
+  (`run`/`compact`, input that may still be arriving, CRC-32 and ISIZE
+  checked). `src/gzstream.mojo` keeps only the `GzInput` trait and `Whole`;
+  the decode loop in `events.decode_gz` runs on `GzipReader`.
+
+## 21. Writing data files on a dista worker: no codec for `DataFile`, no "append these files" in orca (medium; fixed in iceberg-mojo 0.9.1 and orca 0.3.5)
 
 - **Tried:** to have each hour's dista task write its Parquet files into
   `gharchive.events` on the worker and send back only their entries, so
@@ -375,6 +380,12 @@ an hour or needs reading library source), **low** (friction).
   `append_files(ctx, table, files)` next to `append`, and a line in the
   skill that workers can write data files a step commits, with
   `load_dataset` on the worker.
+
+- **Resolved:** iceberg-mojo 0.9.1 has `DataFile.encode`/`decode` (the
+  `iceberg.wire` codec) and orca 0.3.5 has `orca.tables.DataFiles` (a dista
+  `Codec`), `FileWriter`, `write_files` and `append_files`. `src/datafiles.mojo`
+  wraps `FileWriter` for the timing and the page-size options, and
+  `gharchive` commits with `append_files`.
 
 ## 22. json_mlake's simdjson path doesn't fit a scan for a few fields (low)
 

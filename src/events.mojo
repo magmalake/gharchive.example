@@ -12,7 +12,8 @@ from parquet import RecordBatch
 
 from datafiles import BatchSink, DataFiles, TableWriter
 from fetch import Download
-from gzstream import FINISHED, MARGIN, NEED_INPUT, GzInput, GzipInflater, Whole
+from deflate import MARGIN, GzipReader, InflateStatus
+from gzstream import GzInput, Whole
 from jscan import Range, find_newline, scan_event, text, timestamp_micros
 from lake import events_schema
 
@@ -283,7 +284,7 @@ def decode_gz[
     var inflate_ns = 0
     var sink_ns = 0
     var wait_ns = 0
-    var inf = GzipInflater(CHUNK * 2)
+    var gz = GzipReader(CHUNK * 2)
     var p = EventParser()
     var lo = 0
     while True:
@@ -291,25 +292,24 @@ def decode_gz[
         var have = input.have()
         var t0 = perf_counter_ns()
         # At least a little more than is there, should a line outgrow CHUNK.
-        var st = inf.run(
-            input.view(have), complete, max(lo + CHUNK, inf.n + (1 << 20))
+        var st = gz.run(
+            input.view(have), complete, max(lo + CHUNK, len(gz) + (1 << 20))
         )
         inflate_ns += Int(perf_counter_ns() - t0)
-        if st == FINISHED:
-            p.feed(Span(inf.buf), lo, inf.n)
+        if st == InflateStatus.FINISHED:
+            p.feed(gz.output(), lo, len(gz))
             break
-        var buf = Span(inf.buf)
-        var nl = inf.n - 1
-        while nl >= lo and buf[nl] != 0x0A:
+        var nl = len(gz) - 1
+        while nl >= lo and gz.output()[nl] != 0x0A:
             nl -= 1
         if nl >= lo:
-            p.feed(buf, lo, nl + 1)
+            p.feed(gz.output(), lo, nl + 1)
             lo = nl + 1
-        lo -= inf.compact(lo)
+        lo -= gz.compact(lo)
         sink_ns += _drain(p, sink)
-        if st == NEED_INPUT:
+        if st == InflateStatus.NEED_INPUT:
             var t1 = perf_counter_ns()
-            _ = input.wait(inf.pos + MARGIN)
+            _ = input.wait(gz.input_used() + MARGIN)
             wait_ns += Int(perf_counter_ns() - t1)
     var rest = p^.finish()
     var t1 = perf_counter_ns()
