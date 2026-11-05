@@ -5,7 +5,7 @@
 
 from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
-from history import History, _parse_log, is_mojo_file, safe_repo
+from history import History, _parse_log, _sh, is_mojo_file, safe_repo
 from dista import Seq
 from history import CommitRow, MigrationRow
 
@@ -47,6 +47,14 @@ def test_mojo_files() raises:
     assert_true(is_mojo_file("a/b.mojo"))
     assert_true(is_mojo_file("x.🔥"))
     assert_false(is_mojo_file("a.mojom"))
+
+
+def test_output_not_utf8() raises:
+    # An old commit's Latin-1 author or path: the bytes that aren't UTF-8
+    # are dropped instead of failing the whole run.
+    var r = _sh("printf 'caf\\351 ok\\n'; (exit 3)")
+    assert_equal(r[0], 3)
+    assert_equal(r[1], "caf ok\n")
 
 
 def test_safe_repo() raises:

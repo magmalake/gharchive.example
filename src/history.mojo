@@ -73,8 +73,12 @@ def is_mojo_file(path: StringSlice) -> Bool:
 
 
 def _sh(cmd: String) raises -> Tuple[Int, String]:
-    """Runs `cmd` with `sh`, and returns its exit status and its output."""
-    var out = run(String(cmd, '; echo "@@exit $?"'))
+    """Runs `cmd` with `sh`, and returns its exit status and its output, any
+    bytes that aren't UTF-8 dropped: an old commit's author or path can be
+    Latin-1, and `run` refuses output that isn't UTF-8."""
+    var out = run(
+        String("{ ", cmd, '; echo "@@exit $?"; } | iconv -c -f UTF-8 -t UTF-8; true')
+    )
     var at = out.rfind("@@exit ")
     if at < 0:
         return (-1, out^)
@@ -230,14 +234,37 @@ def _parse_log(repo: String, dir: String, log: String, mut out: History) raises:
 
 def read_history(repo: String) raises -> History:
     """Clones `repo` from GitHub and reads its history. Errors (a repository
-    gone, a clone that failed) come back in `error`, so one bad repository
-    doesn't fail the rest of its run."""
+    gone, a clone that failed, history that doesn't parse) come back in
+    `error`, so one bad repository doesn't fail the rest of its run."""
     var out = History(repo, String(), Seq[CommitRow](), Seq[MigrationRow]())
+    try:
+        _read_history(repo, out)
+    except e:
+        if safe_repo(repo):
+            try:
+                _ = _sh(String("rm -rf '", _clone_dir(repo), "'"))
+            except:
+                pass
+        out = History(
+            repo, String("reading its history: ", e), Seq[CommitRow](), Seq[MigrationRow]()
+        )
+    return out^
+
+
+def _workdir() -> String:
+    return getenv("MOJO_HISTORY_WORKDIR", String(getenv("TMPDIR", "/tmp"), "/mojo_history"))
+
+
+def _clone_dir(repo: String) -> String:
+    return String(_workdir(), "/", repo.replace("/", "__"), ".git")
+
+
+def _read_history(repo: String, mut out: History) raises:
     if not safe_repo(repo):
         out.error = String("not a repository name: ", repo)
-        return out^
-    var base = getenv("MOJO_HISTORY_WORKDIR", String(getenv("TMPDIR", "/tmp"), "/mojo_history"))
-    var dir = String(base, "/", repo.replace("/", "__"), ".git")
+        return
+    var base = _workdir()
+    var dir = _clone_dir(repo)
     _ = _sh(String("mkdir -p '", base, "' && rm -rf '", dir, "'"))
     var clone = _sh(
         String(
@@ -248,7 +275,7 @@ def read_history(repo: String) raises -> History:
     if clone[0] != 0:
         out.error = String("git clone failed: ", clone[1].strip())
         _ = _sh(String("rm -rf '", dir, "'"))
-        return out^
+        return
     var log = _sh(
         String(
             "git -C '", dir, "' -c core.quotepath=off log --first-parent",
@@ -261,4 +288,3 @@ def read_history(repo: String) raises -> History:
     else:
         _parse_log(repo, dir, log[1], out)
     _ = _sh(String("rm -rf '", dir, "'"))
-    return out^
