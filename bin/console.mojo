@@ -3,19 +3,27 @@ mojo.repo_stats, mojo.activity, mojo.releases and mojo.tags.
 
     PORT=8080 pixi run ./build/console
 
-Pages: `/` the libraries by size and age (`?sort=stars` for the most starred
-first), `/search?q=` finds libraries by name, GitHub topic or description, `/versions` the
-migrations to each Mojo version over time, `/how` and `/how/optimizations`
-how the census is built, `/repos/<owner>/<name>` one library. The data pages
-have JSON at `/api/...`. Every request scans the tables again; they're small.
+Pages: `/` the overview (cards, repos per Mojo version, growth curves),
+`/repos` the repos by size and age (`?sort=lines|files|stars&dir=asc|desc`,
+`?version=1.x`, `?active=1y`), `/search?q=` finds repos by name, GitHub topic
+or description, `/migrations` the migrations to each Mojo version over time,
+`/how` and `/how/optimizations` how the census is built,
+`/repos/<owner>/<name>` one repo. The data pages have JSON at `/api/...`.
+
+The repos and the overview are computed once and kept (`Cache`): the
+tables' current snapshots are looked at most every five minutes, and
+everything is read again only when one of them moved or the day changed.
+The per-repo pages still scan their own rows.
 
 The look follows mlake.dev: its warm-ash neutrals, ember accent and lake
 links, on the system font stack (no external fonts or scripts).
 """
 
+from std.memory.alloc import unsafe_alloc
 from std.os import getenv
 
 from flare.http import (
+    Handler,
     HttpServer,
     Request,
     Response,
@@ -25,17 +33,29 @@ from flare.http import (
     internal_error,
     not_found,
     ok_json,
+    redirect,
 )
 from flare.net import SocketAddr
 from orca.civil import now
 
+from charts import compact, donut, line_chart
 from jscan import micros_to_iso
+from listing import (
+    ListQuery,
+    list_url,
+    parse_list_query,
+    select_repos,
+    sorted_by,
+    with_active,
+    with_version,
+)
 from model import (
     Library,
     Migration,
     MonthActivity,
     Point,
     Release,
+    Sources,
     VersionMonth,
     activity_by_month,
     activity_months,
@@ -43,10 +63,14 @@ from model import (
     history,
     libraries,
     migrations,
+    read_days,
+    read_sources,
     releases,
+    star_gains,
     versions_by_month,
 )
 from days import day_text
+from overview import ACTIVE_DAYS, Builder, Overview, family_color, family_of, top_gains
 from search import search_score, sort_families, url_decode, version_family
 from versions import sort_versions
 
@@ -129,7 +153,32 @@ td.what{white-space:normal;min-width:30ch}
 .chip{display:inline-block;font:500 11.5px/1.5 var(--mono);color:var(--muted);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:0 8px}
 a.chip:hover{color:var(--text);border-color:var(--border-strong);text-decoration:none}
 .head .chips{margin:0 0 14px;max-width:none}
-@media (max-width:640px){.top .wrap{gap:12px;flex-wrap:wrap;height:auto;padding-block:8px}.search{order:3;flex-basis:100%;max-width:none}.top nav{gap:12px}.top nav .sep,.top nav .arrow{display:none}.brand{font-size:15px}h1{font-size:24px}th,td{padding:9px 10px}main{padding-top:24px}footer nav{margin-left:0}}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kpi{display:block;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;min-width:0;color:var(--text);box-shadow:var(--shadow)}
+a.kpi:hover{border-color:var(--border-strong);text-decoration:none}
+.kpi b{display:block;color:var(--faint);font:500 11.5px/1.5 var(--mono);letter-spacing:.08em;text-transform:uppercase}
+.kpi span{display:block;font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em;line-height:1.2;margin-top:2px}
+.kpi small{display:block;color:var(--muted);font-size:12.5px}
+.kpi .up{color:var(--c2)}.kpi .down{color:var(--ember)}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:16px}
+.card h3{margin:0 0 4px;font-size:15px;font-weight:600}
+.card .donut{max-width:240px;margin:4px auto}
+.donut text{fill:var(--muted);font:11px var(--mono)}
+.donut text.big{fill:var(--text);font:700 30px ui-sans-serif,system-ui,sans-serif}
+.donut a:hover circle{stroke-opacity:.75}
+.card svg.lc text{font-size:12.5px}
+.legend .sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:baseline}
+.legend b{font-variant-numeric:tabular-nums;font-weight:600}
+.legend a{color:var(--text)}
+.big-stat{font-size:20px;font-weight:600;margin:0 0 4px}
+.filters{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin:0 0 12px;font-size:13px}
+.filters .chip{font-size:12.5px;padding:1px 10px}
+.filters .on{color:var(--text);background:var(--ember-wash);border-color:var(--ember)}
+.filters .label{color:var(--muted)}
+th a{color:inherit;display:inline-block}th a:hover{color:var(--text);text-decoration:none}
+th[aria-sort] a{color:var(--text)}
+.asof{color:var(--muted);font-size:13px;max-width:78ch;margin-top:28px}
+@media (max-width:640px){.kpi span{font-size:22px}.top .wrap{gap:12px;flex-wrap:wrap;height:auto;padding-block:8px}.search{order:3;flex-basis:100%;max-width:none}.top nav{gap:12px}.top nav .sep,.top nav .arrow{display:none}.brand{font-size:15px}h1{font-size:24px}th,td{padding:9px 10px}main{padding-top:24px}footer nav{margin-left:0}}
 """
 
 comptime COMMITS_SHOWN = 50
@@ -154,7 +203,7 @@ def _nav(href: String, label: String, current: Bool) -> String:
 comptime BRAND = "Mojo census"
 
 comptime DESCRIPTION = (
-    "Mojo libraries, versions and growth, counted from GH Archive by"
+    "Mojo repos, versions and growth, counted from GH Archive by"
     " magmalake. An independent project, not affiliated with Modular."
 )
 
@@ -162,9 +211,9 @@ comptime DESCRIPTION = (
 def _page(
     title: String, var body: String, section: String, q: String = ""
 ) raises -> Response:
-    """The page around `body`; `section` is `libraries`, `versions` or `how`, the
-    nav entry to light up (none for search); `q` fills the search box. An empty `title` is the home page, titled with
-    the brand alone; others read "<title> · Mojo census"."""
+    """The page around `body`; `section` is `repos`, `migrations` or `how`, the
+    nav entry to light up (none for the overview and search); `q` fills the search box. An empty `title` is the
+    home page, titled with the brand alone; others read "<title> · Mojo census"."""
     var full = String(BRAND) if title == "" else String(title, " · ", BRAND)
     var h = String(
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
@@ -175,10 +224,10 @@ def _page(
         "<title>", html_escape(full), "</title><style>", STYLE, "</style></head><body>",
         "<header class=top><div class=wrap><a class=brand href='/'>", MARK, BRAND, "</a>",
         "<form class=search action='/search' role=search><input type=search name=q value='",
-        html_escape(q), "' placeholder='Search libraries' aria-label='Search libraries'",
+        html_escape(q), "' placeholder='Search repos' aria-label='Search repos'",
         " autocomplete=off></form>",
-        "<nav>", _nav("/", "Libraries", section == "libraries"),
-        _nav("/versions", "Versions", section == "versions"),
+        "<nav>", _nav("/repos", "Repos", section == "repos"),
+        _nav("/migrations", "Migrations", section == "migrations"),
         _nav("/how", "How it works", section == "how"),
         "<span class=sep aria-hidden=true></span>",
         "<a href='https://orca.mlake.dev' rel=noopener title='The pipelines that build this census'>orca<span class=arrow> &#8599;</span></a><a href='https://mlake.dev' rel=noopener>mlake.dev<span class=arrow> &#8599;</span></a></nav></div></header>",
@@ -276,17 +325,151 @@ def _chips(topics: List[String], limit: Int = 6) -> String:
     return h^
 
 
-def _libs_table(libs: List[Library], today: Int) -> String:
-    """The Libraries table, in the order of `libs`; the home page and the
-    search results both draw it."""
+comptime RECHECK_SECS = 300
+"""How often the tables' current snapshots are looked at."""
+comptime RISING_SHOWN = 10
+
+
+struct Cache(Movable):
+    """The repos and the overview, computed once. `refresh` looks at the
+    tables' snapshots at most every `RECHECK_SECS` and reads everything again
+    only when one moved or the day changed (the windows of 30 days and 12
+    months slide with it). The server is one thread, so no lock is needed."""
+
+    var ready: Bool
+    var libs: List[Library]
+    """Biggest (lines of Mojo now) first."""
+    var lines: List[Int64]
+    var files: List[Int64]
+    var stars: List[Int64]
+    var families: List[String]
+    """`family_of` each repo's current Mojo version."""
+    var active: List[Bool]
+    var ov: Overview
+    var rising: List[String]
+    var rising_gain: List[Int64]
+    var rising_stars: List[Int64]
+    var sources: Sources
+    var built_day: Int
+    var checked_at: Int64
+    var built_at: Int64
+
+    def __init__(out self):
+        self.ready = False
+        self.libs = List[Library]()
+        self.lines = List[Int64]()
+        self.files = List[Int64]()
+        self.stars = List[Int64]()
+        self.families = List[String]()
+        self.active = List[Bool]()
+        self.ov = Overview()
+        self.rising = List[String]()
+        self.rising_gain = List[Int64]()
+        self.rising_stars = List[Int64]()
+        self.sources = Sources()
+        self.built_day = 0
+        self.checked_at = 0
+        self.built_at = 0
+
+    def refresh(mut self) raises:
+        var t = now()
+        if self.ready and t - self.checked_at < RECHECK_SECS:
+            return
+        var src = Sources()
+        try:
+            src = read_sources()
+        except e:
+            if self.ready:
+                self.checked_at = t  # keep serving what we have
+                return
+            raise e^
+        var today = Int(t // 86400)
+        self.checked_at = t
+        if self.ready and self.built_day == today and src.same_as(self.sources):
+            return
+        read_days(src)
+        try:
+            self._build(today, src^)
+            self.built_at = t
+        except e:
+            if not self.ready:
+                raise e^
+            # Keep serving what we have; the next check tries again.
+            self.sources = Sources()
+
+    def _build(mut self, today: Int, var src: Sources) raises:
+        var b = Builder(today)
+        var libs = libraries(b)
+        var ov = b.finish(len(libs))
+        var gains = star_gains(today - 30)
+        var cutoff = Int64(today - ACTIVE_DAYS) * 86_400_000_000
+        var lines = List[Int64]()
+        var files = List[Int64]()
+        var stars = List[Int64]()
+        var families = List[String]()
+        var active = List[Bool]()
+        var gain_list = List[Int64]()
+        for ref l in libs:
+            lines.append(l.mojo_lines)
+            files.append(l.mojo_files)
+            stars.append(l.stars)
+            families.append(family_of(l.mojo_version))
+            active.append(l.commits > 0 and l.last_commit >= cutoff)
+            gain_list.append(gains.get(l.repo, Int64(0)))
+        self.rising = List[String]()
+        self.rising_gain = List[Int64]()
+        self.rising_stars = List[Int64]()
+        for i in top_gains(gain_list, RISING_SHOWN):
+            self.rising.append(libs[i].repo)
+            self.rising_gain.append(gain_list[i])
+            self.rising_stars.append(libs[i].stars)
+        self.ov = ov^
+        self.lines = lines^
+        self.files = files^
+        self.stars = stars^
+        self.families = families^
+        self.active = active^
+        self.libs = libs^
+        self.sources = src^
+        self.built_day = today
+        self.ready = True
+
+    def find(self, repo: String) -> Optional[Library]:
+        for ref l in self.libs:
+            if l.repo == repo:
+                return l.copy()
+        return None
+
+
+def _th(label: String, key: String, q: ListQuery, sortable: Bool, num: Bool = True) -> String:
+    """A column header; a sortable one links to the table sorted by it (the
+    same column again flips the direction) and shows the current order."""
+    var cls = String(" class=num") if num else String()
+    if not sortable:
+        return String("<th", cls, ">", label, "</th>")
+    var cur = q.sort == key
+    var aria = String()
+    var arrow = String()
+    if cur:
+        aria = String(" aria-sort=ascending") if q.asc else String(" aria-sort=descending")
+        arrow = String(" &#9650;") if q.asc else String(" &#9660;")
+    return String(
+        "<th", cls, aria, "><a href='", html_escape(list_url(sorted_by(q, key))), "'>", label, arrow, "</a></th>"
+    )
+
+
+def _libs_table(libs: List[Library], idx: List[Int], today: Int, q: ListQuery, sortable: Bool) -> String:
+    """The Repos table: the repos `idx` of `libs`, in that order. The Repos
+    page sorts it by its column headers; search results are in rank order."""
     var h = String(
         "<div class=tbl><table><thead><tr><th>Repository</th>",
-        "<th class=num>Lines of Mojo</th><th class=num>Files</th>",
+        _th("Lines of Mojo", "lines", q, sortable), _th("Files", "files", q, sortable),
         "<th class=num>Commits</th><th>Age</th><th>Created</th>",
-        "<th>Mojo version</th><th>Tooling</th><th class=num>Stars</th>",
-        "<th>Found by</th></tr></thead><tbody>",
+        "<th>Mojo version</th><th>Tooling</th>", _th("Stars", "stars", q, sortable),
+        "</tr></thead><tbody>",
     )
-    for ref l in libs:
+    for i in idx:
+        ref l = libs[i]
         var lines = _n(l.mojo_lines) if l.commits > 0 else String("<span class=mute>not read</span>")
         h.write(
             "<tr><td><a class=repo href='/repos/", html_escape(l.repo), "'>", html_escape(l.repo),
@@ -294,70 +477,449 @@ def _libs_table(libs: List[Library], today: Int) -> String:
             _n(l.mojo_files), "</td><td class=num>", l.commits, "</td><td>",
             _age(l.created_at, today), "</td><td>", day(l.created_at),
             "</td><td class='mono soft'>", _or_dash(l.mojo_version), "</td><td>",
-            _or_dash(l.tooling), "</td><td class=num>", _n(l.stars),
-            "</td><td class='mute soft'>", html_escape(l.found_by), "</td></tr>",
+            _or_dash(l.tooling), "</td><td class=num>", _n(l.stars), "</td></tr>",
         )
     h.write("</tbody></table></div>")
     return h^
 
 
-def _by_stars(var libs: List[Library]) -> List[Library]:
-    """Most starred first; ties stay in the order they came (biggest first)."""
-    for i in range(1, len(libs)):
-        var j = i
-        while j > 0 and libs[j - 1].stars < libs[j].stars:
-            libs.swap_elements(j - 1, j)
-            j -= 1
-    return libs^
+def _list_query(req: Request) -> ListQuery:
+    return parse_list_query(
+        req.query_param("sort"), req.query_param("dir"),
+        url_decode(req.query_param("version")), req.query_param("active"),
+    )
 
 
-def index(req: Request) raises -> Response:
-    try:
-        var libs = libraries()
-        var by_stars = req.query_param("sort") == "stars"
-        if by_stars:
-            libs = _by_stars(libs^)
-        var today = _now_days()
-        var h = String(
-            "<h1>Mojo libraries</h1><p class=sub>Mojo libraries, versions and growth, counted",
-            " from GH Archive by magmalake. Not affiliated with Modular.</p><p class=lead>", len(libs),
-            " repositories found in GH Archive, ",
-            "most starred first" if by_stars else "biggest first",
-            ". Size is lines of Mojo at the last commit read; age is since GitHub",
-            " created the repository.</p>",
+def _raw_query(req: Request) -> String:
+    """The part of the URL after `?`, before any `#`; empty for none."""
+    var q = req.url.find("?")
+    if q < 0:
+        return String()
+    var s = String(req.url[byte = q + 1 :])
+    var hash = s.find("#")
+    if hash >= 0:
+        var cut = String(s[byte=:hash])
+        s = cut^
+    return s^
+
+
+def _filter_options(q: ListQuery, c: Cache) -> String:
+    """The version families and the activity filter as links, with how many
+    repos each has under the other filter; the ones in use are marked."""
+    var per = Dict[String, Int]()
+    var total = 0
+    for i in range(len(c.libs)):
+        if q.active and not c.active[i]:
+            continue
+        per[c.families[i]] = per.get(c.families[i], 0) + 1
+        total += 1
+    var h = String("<div class=filters><span class=label>Mojo version</span>")
+    h.write(
+        "<a class='chip", " on" if q.version.byte_length() == 0 else "", "' href='",
+        html_escape(list_url(with_version(q, String()))), "'>any (", total, ")</a>",
+    )
+    for ref f in c.ov.families:
+        var n = per.get(f, 0)
+        if n == 0 and q.version != f:
+            continue
+        h.write(
+            "<a class='chip", " on" if q.version == f else "", "' href='",
+            html_escape(list_url(with_version(q, f))), "'>", html_escape(f), " (", n, ")</a>",
         )
-        if len(libs) > 1:
-            h.write(
-                "<p class=sort>Sorted by ",
-                "stars &middot; <a href='/'>sort by size</a>" if by_stars
-                else "size &middot; <a href='/?sort=stars'>sort by stars</a>",
-                "</p>",
-            )
-        if len(libs) == 0:
+    h.write("<span class=label>Activity</span>")
+    h.write(
+        "<a class='chip", " on" if not q.active else "", "' href='",
+        html_escape(list_url(with_active(q, False))), "'>any</a>",
+        "<a class='chip", " on" if q.active else "", "' href='",
+        html_escape(list_url(with_active(q, True))), "'>active in the last year</a></div>",
+    )
+    return h^
+
+
+def _filter_chips(q: ListQuery) -> String:
+    """The filters in use, each a chip that removes it."""
+    if not q.has_filter():
+        return String()
+    var h = String("<div class=filters><span class=label>Filters</span>")
+    if q.version.byte_length() > 0:
+        h.write(
+            "<a class='chip on' href='", html_escape(list_url(with_version(q, String()))),
+            "' aria-label='Remove the version filter'>version ",
+            html_escape(q.version), " &times;</a>",
+        )
+    if q.active:
+        h.write(
+            "<a class='chip on' href='", html_escape(list_url(with_active(q, False))),
+            "' aria-label='Remove the activity filter'>active in the last year &times;</a>",
+        )
+    h.write("</div>")
+    return h^
+
+
+def repos_page(req: Request, mut c: Cache) raises -> Response:
+    try:
+        c.refresh()
+        var q = _list_query(req)
+        var idx = select_repos(q, c.lines, c.files, c.stars, c.families, c.active)
+        var h = String(
+            "<h1>Mojo repos</h1><p class=sub>Mojo repos, versions and growth, counted",
+            " from GH Archive by magmalake. Not affiliated with Modular.</p>",
+        )
+        if len(c.libs) == 0:
             h.write(
                 _empty(
-                    "No libraries yet",
+                    "No repos yet",
                     "The lake is still filling. The pipelines read GH Archive an hour at a"
                     " time and write a row here for each repository they find Mojo in,"
                     " so this page fills in as they catch up.",
                 )
             )
-            return _page("", h^, "libraries")
-        h.write(_libs_table(libs, today))
-        return _page("", h^, "libraries")
+            return _page("Repos", h^, "repos")
+        h.write(
+            "<p class=lead><strong>", len(idx), " repo" if len(idx) == 1 else " repos",
+            "</strong>", " of " if q.has_filter() else "", String(len(c.libs)) if q.has_filter() else "",
+            " found in GH Archive. Size is lines of Mojo at the last commit read; age is since GitHub",
+            " created the repository. Click a column to sort.</p>",
+            _filter_chips(q), _filter_options(q, c),
+        )
+        if len(idx) == 0:
+            h.write(_empty("No repos match", "No repo has all of these filters. Remove one with the chips above."))
+        else:
+            h.write(_libs_table(c.libs, idx, _now_days(), q, True))
+        return _page("Repos", h^, "repos")
     except e:
         return internal_error(String(e))
 
 
-def _matches(query: String) raises -> List[Library]:
-    """The libraries matching `query`, best match first; equal matches keep
-    the Libraries order (biggest first)."""
-    var hits = List[Library]()
+def _signed(v: Int64) -> String:
+    """`+1,234` or `-12`, in the colour of its direction."""
+    if v > 0:
+        return String("<span class=up>+", _n(v), "</span>")
+    if v < 0:
+        return String("<span class=down>&minus;", _n(-v), "</span>")
+    return String("no change")
+
+
+def _kpi(label: String, value: String, note: String, href: String = "") -> String:
+    """One headline card; a link when `href` is given. `note` is HTML."""
+    var inner = String("<b>", label, "</b><span>", value, "</span><small>", note, "</small>")
+    if href.byte_length() > 0:
+        return String("<a class=kpi href='", html_escape(href), "'>", inner, "</a>")
+    return String("<div class=kpi>", inner, "</div>")
+
+
+def _pct(part: Int, whole: Int) -> String:
+    """`37%`, or `37.5%` below ten; `0%` for no whole."""
+    if whole <= 0:
+        return String("0%")
+    var tenths = part * 1000 // whole
+    if tenths >= 100 or tenths % 10 == 0:
+        return String(tenths // 10, "%")
+    return String(tenths // 10, ".", tenths % 10, "%")
+
+
+def _family_url(f: String, active: Bool) -> String:
+    return list_url(ListQuery(String("lines"), False, f, active))
+
+
+def _family_donut(c: Cache, active: Bool) -> String:
+    """A donut of the repos per Mojo version family (the ones active in the
+    last year when `active`), each slice a link to the filtered Repos table,
+    and a legend with the numbers."""
+    ref ov = c.ov
+    var labels = List[String]()
+    var values = List[Int]()
+    var colors = List[String]()
+    var hrefs = List[String]()
+    var total = 0
+    for i in range(len(ov.families)):
+        var n = ov.family_active[i] if active else ov.family_repos[i]
+        total += n
+        labels.append(ov.families[i])
+        values.append(n)
+        colors.append(family_color(ov.families[i]))
+        hrefs.append(_family_url(ov.families[i], active))
+    var what = String("active in the last year") if active else String("all")
+    var svg = donut(
+        labels, values, colors, hrefs, String(total), String("repos"),
+        String("Donut chart: ", total, " repos (", what, ") by Mojo version family"),
+    )
+    var legend = String("<ul class=legend>")
+    for i in range(len(labels)):
+        if values[i] == 0:
+            continue
+        legend.write(
+            "<li><a href='", html_escape(hrefs[i]), "'><i class=sw style='background:", colors[i],
+            "'></i>", html_escape(labels[i]), " <b>", values[i], "</b> <span class=mute>",
+            _pct(values[i], total), "</span></a></li>",
+        )
+    legend.write("</ul>")
+    return String(
+        "<div class=card><h3>", "Active in the last year" if active else "All repos", "</h3>", svg, legend, "</div>"
+    )
+
+
+def _legend(names: List[String], colors: List[String], values: List[String]) -> String:
+    var h = String("<ul class=legend>")
+    for i in range(len(names)):
+        h.write(
+            "<li><i style='background:", colors[i], "'></i>", html_escape(names[i]), " <b>",
+            values[i], "</b></li>",
+        )
+    h.write("</ul>")
+    return h^
+
+
+def _curve_card(
+    title: String,
+    months: List[String],
+    names: List[String],
+    series: List[List[Int64]],
+    colors: List[String],
+    percent: Bool,
+    note: String,
+    area: Bool = False,
+) -> String:
+    var last = months[len(months) - 1]
+    var aria = String("Line chart: ", title, ", ", months[0], " to ", last)
+    var now_vals = List[String]()
+    for ref s in series:
+        now_vals.append(String(s[len(s) - 1], "%") if percent else _n(s[len(s) - 1]))
+    var svg = line_chart(months, names, series, colors, percent, aria, area)
+    # The class lets the chart's text be sized for small screens.
+    svg = svg.replace("<svg viewBox", "<svg class=lc viewBox", )
+    return String(
+        "<div class=card><h3>", html_escape(title), "</h3>", svg,
+        _legend(names, colors, now_vals), "<p class=mute>", note, "</p></div>",
+    )
+
+
+def _as_of(ms: Int64) -> String:
+    """`2026-11-05 03:12 UTC` for a time in milliseconds."""
+    var iso = micros_to_iso(ms * 1000)
+    return String(iso[byte=:10], " ", iso[byte=11:16], " UTC")
+
+
+def overview(req: Request, mut c: Cache) raises -> Response:
+    if _raw_query(req).byte_length() > 0 and (
+        req.query_param("sort").byte_length() > 0
+        or req.query_param("dir").byte_length() > 0
+        or req.query_param("version").byte_length() > 0
+        or req.query_param("active").byte_length() > 0
+    ):
+        # The Repos table used to be the home page: keep its links working.
+        return redirect(String("/repos?", _raw_query(req)), 301)
+    try:
+        c.refresh()
+        ref ov = c.ov
+        var h = String(
+            "<h1>Mojo census</h1><p class=lead>How the Mojo language is being used on GitHub:",
+            " the repos that contain Mojo, found in GH Archive, with their whole git history",
+            " read. An independent project, not affiliated with Modular.</p>",
+        )
+        if ov.repos == 0:
+            h.write(
+                _empty(
+                    "No repos yet",
+                    "The lake is still filling. The pipelines read GH Archive an hour at a"
+                    " time, so this page fills in as they catch up.",
+                )
+            )
+            return _page("", h^, "overview")
+        var dc = ov.commits_30 - ov.commits_prev_30
+        h.write(
+            "<div class=kpis>",
+            _kpi(
+                "Repos", _n(Int64(ov.repos)),
+                String(_signed(Int64(ov.with_history - ov.repos_30_ago)), " in 30 days"),
+                String("/repos"),
+            ),
+            _kpi(
+                "Commits", _n(Int64(ov.commits)),
+                String(_signed(Int64(ov.commits_30)), " in 30 days"),
+            ),
+            _kpi(
+                "Lines of Mojo", compact(ov.lines),
+                String(_signed(ov.lines - ov.lines_30_ago), " in 30 days"),
+                list_url(ListQuery(String("lines"), False, String(), False)),
+            ),
+            _kpi(
+                "Active repos", _n(Int64(ov.active)),
+                String(_pct(ov.active, ov.with_history), " of ", ov.with_history, " read; a commit in the last year"),
+                String("/repos?active=1y"),
+            ),
+            _kpi(
+                "Commits, 30 days", _n(Int64(ov.commits_30)),
+                String(_signed(Int64(dc)), " vs the 30 days before"),
+            ),
+            _kpi(
+                "New repos this month", _n(Int64(ov.new_this_month)),
+                String(ov.new_last_month, " last month (first Mojo commit)"),
+            ),
+            "</div>",
+        )
+        # Repos per Mojo version family.
+        h.write(
+            "<h2>Repos by Mojo version</h2><p class=sub>The version a repo's latest lock file (or manifest)",
+            " names; <em>unknown</em> when it has none. Click a slice for its repos.</p>",
+            "<div class=cols>", _family_donut(c, False), _family_donut(c, True), "</div>",
+        )
+        # Adoption of the newest release.
+        if ov.known_active > 0 and ov.newest_family.byte_length() > 0:
+            h.write(
+                "<h2>Adoption of the newest Mojo</h2><div class=card><p class=big-stat>",
+                _pct(ov.newest_active, ov.known_active), " of active repos are on ",
+                "<a href='", html_escape(_family_url(ov.newest_family, True)), "'>",
+                html_escape(ov.newest_family), "</a></p><p>", ov.newest_active, " of the ",
+                ov.known_active, " repos with a commit in the last year and a known Mojo version.",
+                " The newest release any of them uses is ", html_escape(ov.newest_version), ".</p>",
+                "<p class=mute>How fast repos move after a release is not shown: the census has no",
+                " release dates for Mojo itself, and the first repo to lock a version is often a",
+                " nightly user, so the days to adoption would be misleading.</p></div>",
+            )
+        # Growth.
+        if len(ov.months) >= 2:
+            var m = ov.months.copy()
+            var single_color: List[String] = ["var(--ember)"]
+            var lines_names: List[String] = ["Lines of Mojo"]
+            var lines_series = List[List[Int64]]()
+            lines_series.append(ov.lines_series.copy())
+            var repos_names: List[String] = ["Repos"]
+            var repos_series = List[List[Int64]]()
+            repos_series.append(ov.repos_series.copy())
+            var commits_names: List[String] = ["Commits"]
+            var commits_series = List[List[Int64]]()
+            commits_series.append(ov.commits_series.copy())
+            h.write(
+                "<h2>Growth</h2><p class=sub>Monthly, from each repo's full git history, so the",
+                " curves reach back before the census found the repos.</p><div class=cols>",
+                _curve_card(
+                    "Lines of Mojo", m, lines_names, lines_series, single_color, False,
+                    "Lines of Mojo at the end of each month, summed over every repo.", True,
+                ),
+                _curve_card(
+                    "Repos", m, repos_names, repos_series, single_color, False,
+                    "A repo counts from its first Mojo commit.", True,
+                ),
+                _curve_card(
+                    "Commits per month", m, commits_names, commits_series, single_color, False,
+                    "Commits in the repos' first-parent histories.", True,
+                ),
+            )
+            # Tooling share, in percent of the repos that exist that month.
+            var none = List[Int64]()
+            var magic = List[Int64]()
+            var pixi = List[Int64]()
+            for k in range(len(m)):
+                var tot = ov.tool_none[k] + ov.tool_magic[k] + ov.tool_pixi[k]
+                var t = tot if tot > 0 else Int64(1)
+                none.append(ov.tool_none[k] * 100 // t)
+                magic.append(ov.tool_magic[k] * 100 // t)
+                pixi.append(ov.tool_pixi[k] * 100 // t)
+            var tool_names: List[String] = ["none", "magic", "pixi"]
+            var tool_colors: List[String] = ["var(--c5)", "var(--c1)", "var(--c2)"]
+            var tool_series = List[List[Int64]]()
+            tool_series.append(none^)
+            tool_series.append(magic^)
+            tool_series.append(pixi^)
+            h.write(
+                _curve_card(
+                    "Tooling", m, tool_names, tool_series, tool_colors, True,
+                    "Share of repos by how they manage Mojo: no lock file or manifest, magic, or pixi.",
+                ),
+                "</div>",
+            )
+        # Rising.
+        if len(c.rising) > 0:
+            h.write(
+                "<h2>Rising</h2><p class=sub>The repos that gained the most stars in the last 30 days,",
+                " counted from GH Archive's WatchEvents on the days loaded so far.</p><div class=tbl><table><thead><tr>",
+                "<th>Repository</th><th class=num>Stars, 30 days</th><th class=num>Stars</th></tr></thead><tbody>",
+            )
+            for i in range(len(c.rising)):
+                h.write(
+                    "<tr><td><a class=repo href='/repos/", html_escape(c.rising[i]), "'>",
+                    html_escape(c.rising[i]), "</a></td><td class=num>", _signed(c.rising_gain[i]),
+                    "</td><td class=num>", _n(c.rising_stars[i]), "</td></tr>",
+                )
+            h.write("</tbody></table></div>")
+        # As of.
+        h.write(
+            "<p class=asof>Data as of ", _as_of(c.sources.as_of_ms), " (the latest snapshot of the tables",
+            " behind this page; every run is on <a href='", ORCA_UI, "/runs' rel=noopener>orca.mlake.dev/runs</a>).",
+            " Repos are discovered from the GH Archive days loaded so far",
+        )
+        if c.sources.days > 0:
+            h.write(
+                ": ", c.sources.days, " days, ", c.sources.first_day, " to ", c.sources.last_day,
+                ". A repo is found only when an event of it falls on a loaded day, so the repo count is a lower bound",
+            )
+        h.write(".</p>")
+        return _page("", h^, "overview")
+    except e:
+        return internal_error(String(e))
+
+
+def overview_json(req: Request, mut c: Cache) raises -> Response:
+    try:
+        c.refresh()
+        ref ov = c.ov
+        var out = String(
+            '{"as_of":', _q(micros_to_iso(c.sources.as_of_ms * 1000)),
+            ',"days_loaded":', c.sources.days, ',"first_day":', _q(c.sources.first_day),
+            ',"last_day":', _q(c.sources.last_day), ',"repos":', ov.repos,
+            ',"repos_with_history":', ov.with_history, ',"repos_30d_ago":', ov.repos_30_ago,
+            ',"commits":', ov.commits, ',"commits_30d":', ov.commits_30,
+            ',"commits_prev_30d":', ov.commits_prev_30, ',"mojo_lines":', ov.lines,
+            ',"mojo_lines_30d_ago":', ov.lines_30_ago, ',"new_repos_this_month":', ov.new_this_month,
+            ',"new_repos_last_month":', ov.new_last_month, ',"active_repos":', ov.active,
+            ',"families":[',
+        )
+        for i in range(len(ov.families)):
+            if i > 0:
+                out += ","
+            out.write(
+                '{"family":', _q(ov.families[i]), ',"repos":', ov.family_repos[i],
+                ',"active_repos":', ov.family_active[i], "}",
+            )
+        out.write(
+            '],"newest":{"family":', _q(ov.newest_family), ',"version":', _q(ov.newest_version),
+            ',"active_repos":', ov.newest_active, ',"active_repos_with_version":', ov.known_active,
+            '},"months":[',
+        )
+        for k in range(len(ov.months)):
+            if k > 0:
+                out += ","
+            out.write(
+                '{"month":', _q(ov.months[k]), ',"mojo_lines":', ov.lines_series[k],
+                ',"repos":', ov.repos_series[k], ',"commits":', ov.commits_series[k],
+                ',"tooling":{"none":', ov.tool_none[k], ',"magic":', ov.tool_magic[k],
+                ',"pixi":', ov.tool_pixi[k], "}}",
+            )
+        out += '],"rising":['
+        for i in range(len(c.rising)):
+            if i > 0:
+                out += ","
+            out.write(
+                '{"repo":', _q(c.rising[i]), ',"stars_30d":', c.rising_gain[i],
+                ',"stars":', c.rising_stars[i], "}",
+            )
+        out += "]}"
+        return ok_json(out)
+    except e:
+        return internal_error(String(e))
+
+
+def _matches(query: String, c: Cache) raises -> List[Int]:
+    """The indices into `c.libs` of the repos matching `query`, best match
+    first; equal matches keep the Repos order (biggest first)."""
+    var hits = List[Int]()
     var scores = List[Int]()
-    for ref l in libraries():
+    for i in range(len(c.libs)):
+        ref l = c.libs[i]
         var sc = search_score(l.repo, l.description, query, l.topics)
         if sc > 0:
-            hits.append(l.copy())
+            hits.append(i)
             scores.append(sc)
     for i in range(1, len(hits)):
         var j = i
@@ -368,44 +930,46 @@ def _matches(query: String) raises -> List[Library]:
     return hits^
 
 
-def search(req: Request) raises -> Response:
+def search(req: Request, mut c: Cache) raises -> Response:
     try:
+        c.refresh()
         var q = String(url_decode(req.query_param("q")).strip())
         var h = String("<h1>Search</h1>")
         if q.byte_length() == 0:
             h.write(
                 _empty(
-                    "Search the libraries",
+                    "Search the repos",
                     "Type part of a repository name, topic or description in the box above,"
                     " for example flare or http. Names that match best come first.",
                 )
             )
             return _page("Search", h^, "search")
-        var hits = _matches(q)
+        var hits = _matches(q, c)
         h.write(
-            "<p class=lead>", len(hits), " ", "library" if len(hits) == 1 else "libraries",
+            "<p class=lead>", len(hits), " ", "repo" if len(hits) == 1 else "repos",
             " matching &ldquo;", html_escape(q), "&rdquo; in the repository name, GitHub topics or description.</p>",
         )
         if len(hits) == 0:
-            h.write(_empty("No libraries match", "Try a shorter word, or part of the owner or the name."))
+            h.write(_empty("No repos match", "Try a shorter word, or part of the owner or the name."))
         else:
-            h.write(_libs_table(hits, _now_days()))
+            h.write(_libs_table(c.libs, hits, _now_days(), _list_query(req), False))
         return _page(String("Search: ", q), h^, "search", q)
     except e:
         return internal_error(String(e))
 
 
-def search_json(req: Request) raises -> Response:
+def search_json(req: Request, mut c: Cache) raises -> Response:
     try:
+        c.refresh()
         var q = String(url_decode(req.query_param("q")).strip())
         var out = String("[")
         if q.byte_length() > 0:
             var first = True
-            for ref l in _matches(q):
+            for i in _matches(q, c):
                 if not first:
                     out += ","
                 first = False
-                out += _lib_json(l)
+                out += _lib_json(c.libs[i])
         out += "]"
         return ok_json(out)
     except e:
@@ -440,11 +1004,12 @@ def _lib_json(l: Library) -> String:
     )
 
 
-def index_json(req: Request) raises -> Response:
+def index_json(req: Request, mut c: Cache) raises -> Response:
     try:
+        c.refresh()
         var out = String("[")
         var first = True
-        for ref l in libraries():
+        for ref l in c.libs:
             if not first:
                 out += ","
             first = False
@@ -469,7 +1034,7 @@ def _series_key(v: String, by_family: Bool) -> String:
 
 
 def _versions_chart(rows: List[VersionMonth]) raises -> String:
-    """Libraries migrating each month as one line per Mojo version family (or
+    """Repos migrating each month as one line per Mojo version family (or
     per version when there are at most six), as inline SVG with a legend."""
     var versions = List[String]()
     for ref r in rows:
@@ -486,6 +1051,11 @@ def _versions_chart(rows: List[VersionMonth]) raises -> String:
             oldest.append(v)
     if by_family:
         sort_families(names, oldest)
+    # Families keep their colour across the site (the overview's donuts too).
+    var family_colors = List[String]()
+    if by_family:
+        for ref f in names:
+            family_colors.append(family_color(f))
     var months = List[String]()
     var m = rows[0].month
     var last = rows[len(rows) - 1].month
@@ -503,12 +1073,13 @@ def _versions_chart(rows: List[VersionMonth]) raises -> String:
             top = c
     return _line_chart(
         months, names, counts, top,
-        String("Line chart: libraries migrating to each Mojo version family"),
+        String("Line chart: repos migrating to each Mojo version family"),
         String(
-            "Libraries migrating to each Mojo ", "version family" if by_family else "version",
+            "Repos migrating to each Mojo ", "version family" if by_family else "version",
             " per month, ", months[0], " to ", last,
         ),
-        String("Libraries per month; a library that moved twice in a month counts for each version."),
+        String("Repos per month; a repo that moved twice in a month counts for each version."),
+        family_colors,
     )
 
 
@@ -520,9 +1091,11 @@ def _line_chart(
     aria: String,
     title: String,
     note: String,
+    colors: List[String] = List[String](),
 ) raises -> String:
     """One line per name over `months`, from `counts` (`name|month`), as
-    inline SVG with a legend; the versions and the stars charts draw it."""
+    inline SVG with a legend; the versions and the stars charts draw it.
+    `colors` gives each name's colour (by default the palette in order)."""
     var last = months[len(months) - 1]
     var left = 36
     var right = 12
@@ -556,7 +1129,7 @@ def _line_chart(
             svg.write("<text x=", x, " y=", h - 8, " text-anchor=middle>", months[i], "</text>")
     var legend = String("<ul class=legend>")
     for si in range(len(names)):
-        var color = String("var(--c", si % 6, ")")
+        var color = colors[si] if si < len(colors) else String("var(--c", si % 6, ")")
         var pts = String()
         var dots = String()
         for i in range(n):
@@ -578,13 +1151,13 @@ def _line_chart(
     )
 
 
-def versions(req: Request) raises -> Response:
+def migrations_page(req: Request) raises -> Response:
     try:
         var rows = versions_by_month()
         var h = String(
-            "<h1>Mojo version migrations</h1><p class=lead>A migration is a library's lock",
+            "<h1>Mojo version migrations</h1><p class=lead>A migration is a repo's lock",
             " file (or its manifest, when there's no lock) moving to a Mojo version between",
-            " two of its commits. Each number is the libraries whose lock file moved to that",
+            " two of its commits. Each number is the repos whose lock file moved to that",
             " version that month. Versions are in Mojo's own order across the renumbering:",
             " 24.x, 25.x, 0.25.x, 0.26.x, 1.x.</p>",
         )
@@ -592,12 +1165,12 @@ def versions(req: Request) raises -> Response:
             h.write(
                 _empty(
                     "No migrations yet",
-                    "A migration shows up here once a library's lock file has been read at"
+                    "A migration shows up here once a repo's lock file has been read at"
                     " more than one commit and the Mojo version changed between them."
                     " The lake is still filling.",
                 )
             )
-            return _page("Versions", h^, "versions")
+            return _page("Migrations", h^, "migrations")
         h.write(_versions_chart(rows))
         # The month cell spans its rows; the bar is against the busiest row.
         var per_month = Dict[String, Int]()
@@ -609,7 +1182,7 @@ def versions(req: Request) raises -> Response:
         h.write(
             "<h2>By month and version</h2>",
             "<div class=tbl><table><thead><tr><th>Month</th><th>Version</th>",
-            "<th>Libraries migrating</th></tr></thead><tbody>",
+            "<th>Repos migrating</th></tr></thead><tbody>",
         )
         var last_month = String()
         for ref r in rows:
@@ -625,7 +1198,7 @@ def versions(req: Request) raises -> Response:
                 "%' aria-hidden=true></i></div></td></tr>",
             )
         h.write("</tbody></table></div>")
-        return _page("Versions", h^, "versions")
+        return _page("Migrations", h^, "migrations")
     except e:
         return internal_error(String(e))
 
@@ -708,17 +1281,11 @@ def _stat(label: String, value: String, note: String = "") -> String:
     )
 
 
-def _find(repo: String) raises -> Optional[Library]:
-    for ref l in libraries():
-        if l.repo == repo:
-            return l.copy()
-    return None
-
-
-def repo_page(req: Request) raises -> Response:
+def repo_page(req: Request, mut c: Cache) raises -> Response:
     try:
+        c.refresh()
         var repo = String(req.param("owner"), "/", req.param("name"))
-        var found = _find(repo)
+        var found = c.find(repo)
         if not found:
             return not_found(req.url)
         var l = found.value().copy()
@@ -832,15 +1399,16 @@ def repo_page(req: Request) raises -> Response:
                     "<p class=mute>The latest ", COMMITS_SHOWN, " of ", len(pts),
                     " commits; all of them are in <a href='/api/repos/", html_escape(repo), "'>the JSON</a>.</p>",
                 )
-        return _page(repo, h^, "libraries")
+        return _page(repo, h^, "repos")
     except e:
         return internal_error(String(e))
 
 
-def repo_json(req: Request) raises -> Response:
+def repo_json(req: Request, mut c: Cache) raises -> Response:
     try:
+        c.refresh()
         var repo = String(req.param("owner"), "/", req.param("name"))
-        var found = _find(repo)
+        var found = c.find(repo)
         if not found:
             return not_found(req.url)
         var out = String('{"library":', _lib_json(found.value()), ',"migrations":[')
@@ -927,15 +1495,15 @@ comptime HOW = (
     "<li><a href='"
     + ORCA_UI
     + "/pipelines/mojo_activity' rel=noopener>mojo_activity</a> counts each"
-    " library's GH Archive events per day, with no API calls: stars, forks,"
+    " repo's GH Archive events per day, with no API calls: stars, forks,"
     " releases, issues and pull requests opened, pushes and people, into"
-    " <code>mojo.activity</code> and <code>mojo.releases</code>. A library found"
+    " <code>mojo.activity</code> and <code>mojo.releases</code>. A repo found"
     " today is read back over every day already loaded, so its history is"
     " complete.</li>"
     "<li><a href='"
     + ORCA_UI
     + "/pipelines/mojo_stats' rel=noopener>mojo_stats</a> asks GitHub about every"
-    " library each Monday (one request each) and keeps the stars, forks, issues"
+    " repo each Monday (one request each) and keeps the stars, forks, issues"
     " and topics week by week in <code>mojo.repo_stats</code>.</li></ul>"
     "<p>Every run, with its steps, logs, machines and the tables it wrote, is on"
     " <a href='"
@@ -1077,18 +1645,55 @@ def optimizations(req: Request) raises -> Response:
     return _page("Optimizations", h^, "how")
 
 
+@fieldwise_init
+struct Site(Handler, Copyable):
+    """One route of the console, with the shared `Cache`."""
+
+    var page: Int
+    var cache: Int
+    """The address of the `Cache`, which lives as long as the process."""
+
+    def serve(self, req: Request) raises -> Response:
+        ref c = Pointer[Cache, MutUntrackedOrigin](unsafe_from_address=self.cache)[]
+        if self.page == 0:
+            return overview(req, c)
+        if self.page == 1:
+            return repos_page(req, c)
+        if self.page == 2:
+            return search(req, c)
+        if self.page == 3:
+            return repo_page(req, c)
+        if self.page == 4:
+            return overview_json(req, c)
+        if self.page == 5:
+            return index_json(req, c)
+        if self.page == 6:
+            return search_json(req, c)
+        return repo_json(req, c)
+
+
+def _moved_to_migrations(req: Request) raises -> Response:
+    return redirect("/migrations", 301)
+
+
 def main() raises:
+    var p = unsafe_alloc[Cache](1)
+    p.unsafe_write(Cache())
+    var cache = Int(p)
     var r = Router()
-    r.get("/", index)
-    r.get("/versions", versions)
+    r.get("/", Site(0, cache))
+    r.get("/repos", Site(1, cache))
+    r.get("/migrations", migrations_page)
+    r.get("/versions", _moved_to_migrations)
     r.get("/how", how)
     r.get("/how/optimizations", optimizations)
-    r.get("/search", search)
-    r.get("/repos/:owner/:name", repo_page)
-    r.get("/api/repos", index_json)
+    r.get("/search", Site(2, cache))
+    r.get("/repos/:owner/:name", Site(3, cache))
+    r.get("/api/overview", Site(4, cache))
+    r.get("/api/repos", Site(5, cache))
     r.get("/api/versions", versions_json)
-    r.get("/api/search", search_json)
-    r.get("/api/repos/:owner/:name", repo_json)
+    r.get("/api/search", Site(6, cache))
+    r.get("/api/repos/:owner/:name", Site(7, cache))
     var addr = String("0.0.0.0:", getenv("PORT", "8080"))
     var server = HttpServer.bind(SocketAddr.parse(addr), ServerConfig())
     print("console on http://", addr, sep="")

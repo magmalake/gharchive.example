@@ -1,7 +1,7 @@
 # mojo-census
 
 A lake of GitHub activity built on [magmalake](https://magmalake.org), and
-a console that shows how Mojo libraries have grown. Everything is Mojo, in
+a console that shows how Mojo repos have grown. Everything is Mojo, in
 one pixi project: five [orca](https://github.com/magmalake/orca.mojo)
 pipelines write Iceberg tables, the project's own `orca` schedules them,
 and a [flare](https://github.com/magmalake/flare_mlake) app reads the
@@ -80,17 +80,27 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   gone, blocked or renamed is a row with that `state`; a rate limit is
   waited out by `Retry-After` / `X-RateLimit-Reset`. A rerun of a day
   replaces that day's rows.
-- **`bin/console.mojo`**: the libraries by size and age (`/`, with their
-  GitHub topics), search by name, topic or description (`/search`), the
-  Mojo versions they moved to over time (`/versions`), and a page per
-  repository (`/repos/<owner>/<name>`: current stars, forks and topics
-  from the latest `mojo.repo_stats` row, stars per month from
-  `mojo.activity`, releases and tags), each also as JSON under `/api/`.
+- **`bin/console.mojo`**: an overview (`/`: repos, commits and lines of
+  Mojo with their change over 30 days, repos per Mojo version family,
+  monthly curves from `mojo.commits`, adoption of the newest version,
+  tooling share, the repos rising in stars), the repos by size and age
+  (`/repos`, sortable by lines, files or stars with `?sort=`, filterable
+  with `?version=1.x` and `?active=1y`), search by name, topic or
+  description (`/search`), the Mojo versions they moved to over time
+  (`/migrations`), and a page per repository (`/repos/<owner>/<name>`:
+  current stars, forks and topics from the latest `mojo.repo_stats` row,
+  stars per month from `mojo.activity`, releases and tags), each also as
+  JSON under `/api/` (`/api/overview`, `/api/repos`, ...). The repos and
+  the overview are computed once and kept in memory; the tables' current
+  snapshots are checked every five minutes and everything is read again
+  only when one moved.
 - **`src/`**: the tables (`lake.mojo`), the JSON scanner, HTTP, detection, git history, and `versions.mojo`, which orders Mojo versions
   across Modular's renumbering (24.x, 25.x, 0.25.x, 0.26.x, 1.x);
   `tests/test_versions.mojo` tests that order. `activity.mojo` counts a
   day's events, `stats.mojo` reads GitHub's repository JSON, and
-  `replace.mojo` replaces a table's rows by partition.
+  `replace.mojo` replaces a table's rows by partition. `overview.mojo` computes the
+  Overview's numbers, `listing.mojo` the Repos table's sorting and filters,
+  and `charts.mojo` draws the SVG charts.
 - **`tools/drop_run.mojo`**: removes the rows one orca run appended to one
   partition (how 2026-10-13, loaded twice before gharchive replaced a
   rerun's day, was repaired).
