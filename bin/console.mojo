@@ -2,9 +2,11 @@
 
     PORT=8080 pixi run ./build/console
 
-Pages: `/` the libraries by size and age, `/versions` the Mojo versions they
-moved to over time, `/repos/<owner>/<name>` one library. Each has JSON at
-`/api/...`. Every request scans the tables again; they're small.
+Pages: `/` the libraries by size and age (`?sort=stars` for the most starred
+first), `/search?q=` finds libraries by name or description, `/versions` the
+migrations to each Mojo version over time, `/how` and `/how/optimizations`
+how the census is built, `/repos/<owner>/<name>` one library. The data pages
+have JSON at `/api/...`. Every request scans the tables again; they're small.
 
 The look follows mlake.dev: its warm-ash neutrals, ember accent and lake
 links, on the system font stack (no external fonts or scripts).
@@ -31,18 +33,21 @@ from model import (
     Library,
     Migration,
     Point,
+    VersionMonth,
     day,
     history,
     libraries,
     migrations,
     versions_by_month,
 )
+from search import search_score, sort_families, url_decode, version_family
+from versions import sort_versions
 
 comptime STYLE = """
 .prose{max-width:72ch}.prose p,.prose li{line-height:1.6}.prose ul{padding-left:1.2em}.prose li{margin:6px 0}
 *{box-sizing:border-box}
-:root{color-scheme:light;--bg:#fbf9f7;--bg-alt:#f4f0ec;--surface:#fff;--surface-2:#f8f5f2;--border:#e3dcd4;--border-strong:#cfc5ba;--text:#17151a;--muted:#6b645d;--faint:#948c84;--ember:#c33c10;--ember-wash:#fdefe7;--lake:#0d6a70;--shadow:0 1px 2px rgb(23 21 26 / .04),0 8px 24px -12px rgb(23 21 26 / .12);--radius:10px;--radius-sm:6px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#0e0d11;--bg-alt:#131218;--surface:#17161d;--surface-2:#1c1b23;--border:#2a2833;--border-strong:#3d3a48;--text:#eeeae4;--muted:#a49d95;--faint:#7b746d;--ember:#ff7a45;--ember-wash:#2a1710;--lake:#4ecdc4;--shadow:0 1px 2px rgb(0 0 0 / .4),0 8px 24px -12px rgb(0 0 0 / .6)}}
+:root{color-scheme:light;--bg:#fbf9f7;--bg-alt:#f4f0ec;--surface:#fff;--surface-2:#f8f5f2;--border:#e3dcd4;--border-strong:#cfc5ba;--text:#17151a;--muted:#6b645d;--faint:#948c84;--ember:#c33c10;--ember-wash:#fdefe7;--lake:#0d6a70;--c0:#2b6cb0;--c1:#c33c10;--c2:#0d8a5a;--c3:#8e44ad;--c4:#a16207;--c5:#5b6770;--shadow:0 1px 2px rgb(23 21 26 / .04),0 8px 24px -12px rgb(23 21 26 / .12);--radius:10px;--radius-sm:6px;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#0e0d11;--bg-alt:#131218;--surface:#17161d;--surface-2:#1c1b23;--border:#2a2833;--border-strong:#3d3a48;--text:#eeeae4;--muted:#a49d95;--faint:#7b746d;--ember:#ff7a45;--ember-wash:#2a1710;--lake:#4ecdc4;--c0:#6aa9ff;--c1:#ff7a45;--c2:#4ecdc4;--c3:#c39bf0;--c4:#e3b341;--c5:#a9b4bd;--shadow:0 1px 2px rgb(0 0 0 / .4),0 8px 24px -12px rgb(0 0 0 / .6)}}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;flex-direction:column}
 a{color:var(--lake);text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:.18em}
@@ -99,17 +104,34 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:8px 24px;align-items:center}
 footer p{margin:0;max-width:78ch}
 footer nav{display:flex;gap:16px;margin-left:auto}
 footer a{color:var(--muted)}footer a:hover{color:var(--text)}
-@media (max-width:640px){.top .wrap{gap:12px}.top nav{gap:12px}.top nav .sep,.top nav .arrow{display:none}.brand{font-size:15px}h1{font-size:24px}th,td{padding:9px 10px}main{padding-top:24px}footer nav{margin-left:0}}
+.search{flex:1;max-width:300px;min-width:0}
+.search input{width:100%;font:inherit;font-size:14px;color:var(--text);background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:5px 10px}
+.search input:focus{outline:2px solid var(--lake);outline-offset:1px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin:0 0 24px;overflow-x:auto}
+.tabs a{color:var(--muted);padding:8px 14px;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
+.tabs a:hover{color:var(--text);text-decoration:none}
+.tabs a[aria-current=page]{color:var(--text);border-bottom-color:var(--ember);font-weight:600}
+td.what{white-space:normal;min-width:30ch}
+.card text{fill:var(--muted);font:11px var(--mono)}
+.card .grid{stroke:var(--border);stroke-width:1}
+.legend{display:flex;flex-wrap:wrap;gap:4px 18px;list-style:none;padding:0;margin:12px 0 0;font-size:13px}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+.sort{margin:-8px 0 14px;font-size:13px}
+.note{max-width:72ch}
+@media (max-width:640px){.top .wrap{gap:12px;flex-wrap:wrap;height:auto;padding-block:8px}.search{order:3;flex-basis:100%;max-width:none}.top nav{gap:12px}.top nav .sep,.top nav .arrow{display:none}.brand{font-size:15px}h1{font-size:24px}th,td{padding:9px 10px}main{padding-top:24px}footer nav{margin-left:0}}
 """
 
 comptime COMMITS_SHOWN = 50
 """How many of a repository's commits the page lists; the JSON has all."""
 
 comptime MARK = (
-    "<svg width=20 height=20 viewBox='0 0 24 24' fill=none aria-hidden=true>"
-    "<path d='M12 1.9 22 20.2H2L12 1.9Z' stroke='var(--lake)' stroke-width='1.6' stroke-linejoin='round'/>"
-    "<path d='M12 9.4 17.4 19H6.6L12 9.4Z' fill='var(--ember)'/></svg>"
+    "<svg width=20 height=20 viewBox='0 0 16 16' fill=none aria-hidden=true>"
+    "<rect width=16 height=16 rx=3 fill='#b45309'/>"
+    "<rect x=3 y=8 width=2.5 height=5 fill='#fff'/>"
+    "<rect x=6.75 y=4 width=2.5 height=9 fill='#fff'/>"
+    "<rect x=10.5 y=6 width=2.5 height=7 fill='#fff'/></svg>"
 )
+"""The tab icon's amber square with three white bars: reads on both themes."""
 
 
 def _nav(href: String, label: String, current: Bool) -> String:
@@ -126,9 +148,11 @@ comptime DESCRIPTION = (
 )
 
 
-def _page(title: String, var body: String, section: String) raises -> Response:
+def _page(
+    title: String, var body: String, section: String, q: String = ""
+) raises -> Response:
     """The page around `body`; `section` is `libraries`, `versions` or `how`, the
-    nav entry to light up. An empty `title` is the home page, titled with
+    nav entry to light up (none for search); `q` fills the search box. An empty `title` is the home page, titled with
     the brand alone; others read "<title> · Mojo census"."""
     var full = String(BRAND) if title == "" else String(title, " · ", BRAND)
     var h = String(
@@ -139,6 +163,9 @@ def _page(title: String, var body: String, section: String) raises -> Response:
         "<meta name=description content='", html_escape(DESCRIPTION), "'>",
         "<title>", html_escape(full), "</title><style>", STYLE, "</style></head><body>",
         "<header class=top><div class=wrap><a class=brand href='/'>", MARK, BRAND, "</a>",
+        "<form class=search action='/search' role=search><input type=search name=q value='",
+        html_escape(q), "' placeholder='Search libraries' aria-label='Search libraries'",
+        " autocomplete=off></form>",
         "<nav>", _nav("/", "Libraries", section == "libraries"),
         _nav("/versions", "Versions", section == "versions"),
         _nav("/how", "How it works", section == "how"),
@@ -222,17 +249,63 @@ def _or_dash(s: String) -> String:
     return html_escape(s)
 
 
+def _libs_table(libs: List[Library], today: Int) -> String:
+    """The Libraries table, in the order of `libs`; the home page and the
+    search results both draw it."""
+    var h = String(
+        "<div class=tbl><table><thead><tr><th>Repository</th>",
+        "<th class=num>Lines of Mojo</th><th class=num>Files</th>",
+        "<th class=num>Commits</th><th>Age</th><th>Created</th>",
+        "<th>Mojo version</th><th>Tooling</th><th class=num>Stars</th>",
+        "<th>Found by</th></tr></thead><tbody>",
+    )
+    for ref l in libs:
+        var lines = _n(l.mojo_lines) if l.commits > 0 else String("<span class=mute>not read</span>")
+        h.write(
+            "<tr><td><a class=repo href='/repos/", html_escape(l.repo), "'>", html_escape(l.repo),
+            "</a></td><td class=num>", lines, "</td><td class=num>",
+            _n(l.mojo_files), "</td><td class=num>", l.commits, "</td><td>",
+            _age(l.created_at, today), "</td><td>", day(l.created_at),
+            "</td><td class='mono soft'>", _or_dash(l.mojo_version), "</td><td>",
+            _or_dash(l.tooling), "</td><td class=num>", _n(l.stars),
+            "</td><td class='mute soft'>", html_escape(l.found_by), "</td></tr>",
+        )
+    h.write("</tbody></table></div>")
+    return h^
+
+
+def _by_stars(var libs: List[Library]) -> List[Library]:
+    """Most starred first; ties stay in the order they came (biggest first)."""
+    for i in range(1, len(libs)):
+        var j = i
+        while j > 0 and libs[j - 1].stars < libs[j].stars:
+            libs.swap_elements(j - 1, j)
+            j -= 1
+    return libs^
+
+
 def index(req: Request) raises -> Response:
     try:
         var libs = libraries()
+        var by_stars = req.query_param("sort") == "stars"
+        if by_stars:
+            libs = _by_stars(libs^)
         var today = _now_days()
         var h = String(
             "<h1>Mojo libraries</h1><p class=sub>Mojo libraries, versions and growth, counted",
             " from GH Archive by magmalake. Not affiliated with Modular.</p><p class=lead>", len(libs),
-            " repositories found in GH Archive, biggest first. Size is lines of",
-            " Mojo at the last commit read; age is since GitHub created the",
-            " repository.</p>",
+            " repositories found in GH Archive, ",
+            "most starred first" if by_stars else "biggest first",
+            ". Size is lines of Mojo at the last commit read; age is since GitHub",
+            " created the repository.</p>",
         )
+        if len(libs) > 1:
+            h.write(
+                "<p class=sort>Sorted by ",
+                "stars &middot; <a href='/'>sort by size</a>" if by_stars
+                else "size &middot; <a href='/?sort=stars'>sort by stars</a>",
+                "</p>",
+            )
         if len(libs) == 0:
             h.write(
                 _empty(
@@ -243,26 +316,71 @@ def index(req: Request) raises -> Response:
                 )
             )
             return _page("", h^, "libraries")
-        h.write(
-            "<div class=tbl><table><thead><tr><th>Repository</th>",
-            "<th class=num>Lines of Mojo</th><th class=num>Files</th>",
-            "<th class=num>Commits</th><th>Age</th><th>Created</th>",
-            "<th>Mojo version</th><th>Tooling</th><th class=num>Stars</th>",
-            "<th>Found by</th></tr></thead><tbody>",
-        )
-        for ref l in libs:
-            var lines = _n(l.mojo_lines) if l.commits > 0 else String("<span class=mute>not read</span>")
-            h.write(
-                "<tr><td><a class=repo href='/repos/", html_escape(l.repo), "'>", html_escape(l.repo),
-                "</a></td><td class=num>", lines, "</td><td class=num>",
-                _n(l.mojo_files), "</td><td class=num>", l.commits, "</td><td>",
-                _age(l.created_at, today), "</td><td>", day(l.created_at),
-                "</td><td class='mono soft'>", _or_dash(l.mojo_version), "</td><td>",
-                _or_dash(l.tooling), "</td><td class=num>", _n(l.stars),
-                "</td><td class='mute soft'>", html_escape(l.found_by), "</td></tr>",
-            )
-        h.write("</tbody></table></div>")
+        h.write(_libs_table(libs, today))
         return _page("", h^, "libraries")
+    except e:
+        return internal_error(String(e))
+
+
+def _matches(query: String) raises -> List[Library]:
+    """The libraries matching `query`, best match first; equal matches keep
+    the Libraries order (biggest first)."""
+    var hits = List[Library]()
+    var scores = List[Int]()
+    for ref l in libraries():
+        var sc = search_score(l.repo, l.description, query)
+        if sc > 0:
+            hits.append(l.copy())
+            scores.append(sc)
+    for i in range(1, len(hits)):
+        var j = i
+        while j > 0 and scores[j - 1] < scores[j]:
+            scores.swap_elements(j - 1, j)
+            hits.swap_elements(j - 1, j)
+            j -= 1
+    return hits^
+
+
+def search(req: Request) raises -> Response:
+    try:
+        var q = String(url_decode(req.query_param("q")).strip())
+        var h = String("<h1>Search</h1>")
+        if q.byte_length() == 0:
+            h.write(
+                _empty(
+                    "Search the libraries",
+                    "Type part of a repository name or description in the box above,"
+                    " for example flare or http. Names that match best come first.",
+                )
+            )
+            return _page("Search", h^, "search")
+        var hits = _matches(q)
+        h.write(
+            "<p class=lead>", len(hits), " ", "library" if len(hits) == 1 else "libraries",
+            " matching &ldquo;", html_escape(q), "&rdquo; in the repository name or description.</p>",
+        )
+        if len(hits) == 0:
+            h.write(_empty("No libraries match", "Try a shorter word, or part of the owner or the name."))
+        else:
+            h.write(_libs_table(hits, _now_days()))
+        return _page(String("Search: ", q), h^, "search", q)
+    except e:
+        return internal_error(String(e))
+
+
+def search_json(req: Request) raises -> Response:
+    try:
+        var q = String(url_decode(req.query_param("q")).strip())
+        var out = String("[")
+        if q.byte_length() > 0:
+            var first = True
+            for ref l in _matches(q):
+                if not first:
+                    out += ","
+                first = False
+                out += _lib_json(l)
+        out += "]"
+        return ok_json(out)
     except e:
         return internal_error(String(e))
 
@@ -295,25 +413,128 @@ def index_json(req: Request) raises -> Response:
         return internal_error(String(e))
 
 
+def _next_month(m: String) raises -> String:
+    """`2025-12` -> `2026-01`."""
+    var y = Int(m[byte=:4])
+    var mo = Int(m[byte=5:7])
+    if mo == 12:
+        return String(y + 1, "-01")
+    return String(y, "-", "0" if mo < 9 else "", mo + 1)
+
+
+def _series_key(v: String, by_family: Bool) -> String:
+    return version_family(v) if by_family else v
+
+
+def _versions_chart(rows: List[VersionMonth]) raises -> String:
+    """Libraries migrating each month as one line per Mojo version family (or
+    per version when there are at most six), as inline SVG with a legend."""
+    var versions = List[String]()
+    for ref r in rows:
+        if r.version not in versions:
+            versions.append(r.version)
+    sort_versions(versions)
+    var by_family = len(versions) > 6
+    var names = List[String]()
+    var oldest = List[String]()
+    for ref v in versions:
+        var k = _series_key(v, by_family)
+        if k not in names:
+            names.append(k)
+            oldest.append(v)
+    if by_family:
+        sort_families(names, oldest)
+    var months = List[String]()
+    var m = rows[0].month
+    var last = rows[len(rows) - 1].month
+    months.append(m)
+    while m < last:
+        m = _next_month(m)
+        months.append(m)
+    var counts = Dict[String, Int]()
+    var top = 1
+    for ref r in rows:
+        var k = String(_series_key(r.version, by_family), "|", r.month)
+        var c = counts.get(k, 0) + r.repos
+        counts[k] = c
+        if c > top:
+            top = c
+    var left = 36
+    var right = 12
+    var up = 10
+    var w = 900
+    var h = 240
+    var pw = w - left - right
+    var ph = h - up - 30
+    var n = len(months)
+    var svg = String(
+        "<svg viewBox='0 0 ", w, " ", h, "' role=img aria-label='Line chart: libraries migrating to each Mojo ",
+        "version family' ><title>Libraries migrating to each Mojo ", "version family" if by_family else "version",
+        " per month, ", months[0], " to ", last, "</title>",
+    )
+    # Gridlines and the Y axis: 0, the middle if there's room, the top.
+    var ticks = List[Int]()
+    ticks.append(0)
+    if top >= 4:
+        ticks.append(top // 2)
+    ticks.append(top)
+    for t in ticks:
+        var y = up + ph - t * ph // top
+        svg.write(
+            "<line class=grid x1=", left, " x2=", w - right, " y1=", y, " y2=", y, "/>",
+            "<text x=", left - 6, " y=", y + 4, " text-anchor=end>", t, "</text>",
+        )
+    # X labels, thinned to about twelve.
+    var every = (n + 11) // 12
+    for i in range(n):
+        var x = left + (pw // 2 if n == 1 else i * pw // (n - 1))
+        if i % every == 0:
+            svg.write("<text x=", x, " y=", h - 8, " text-anchor=middle>", months[i], "</text>")
+    var legend = String("<ul class=legend>")
+    for si in range(len(names)):
+        var color = String("var(--c", si % 6, ")")
+        var pts = String()
+        var dots = String()
+        for i in range(n):
+            var c = counts.get(String(names[si], "|", months[i]), 0)
+            var x = left + (pw // 2 if n == 1 else i * pw // (n - 1))
+            var y = up + ph - c * ph // top
+            pts.write(x, ",", y, " ")
+            if c > 0:
+                dots.write("<circle cx=", x, " cy=", y, " r=3 fill='", color, "'/>")
+        svg.write(
+            "<polyline fill=none stroke='", color, "' stroke-width=2 stroke-linejoin=round points='", pts, "'/>", dots,
+        )
+        legend.write("<li><i style='background:", color, "'></i>", html_escape(names[si]), "</li>")
+    svg.write("</svg>")
+    legend.write("</ul>")
+    return String(
+        "<div class=card>", svg, legend,
+        "<p class=mute>Libraries per month; a library that moved twice in a month counts for each version.</p></div>",
+    )
+
+
 def versions(req: Request) raises -> Response:
     try:
         var rows = versions_by_month()
         var h = String(
-            "<h1>Mojo versions over time</h1><p class=lead>Each month, how many",
-            " libraries moved to each Mojo version (from their lock file, or",
-            " their manifest when there's no lock), in Mojo's own order across",
-            " the renumbering: 24.x, 25.x, 0.25.x, 0.26.x, 1.x.</p>",
+            "<h1>Mojo version migrations</h1><p class=lead>A migration is a library's lock",
+            " file (or its manifest, when there's no lock) moving to a Mojo version between",
+            " two of its commits. Each number is the libraries whose lock file moved to that",
+            " version that month. Versions are in Mojo's own order across the renumbering:",
+            " 24.x, 25.x, 0.25.x, 0.26.x, 1.x.</p>",
         )
         if len(rows) == 0:
             h.write(
                 _empty(
                     "No migrations yet",
-                    "A version shows up here once a library's lock file has been read at"
+                    "A migration shows up here once a library's lock file has been read at"
                     " more than one commit and the Mojo version changed between them."
                     " The lake is still filling.",
                 )
             )
             return _page("Versions", h^, "versions")
+        h.write(_versions_chart(rows))
         # The month cell spans its rows; the bar is against the busiest row.
         var per_month = Dict[String, Int]()
         var top = 1
@@ -322,8 +543,9 @@ def versions(req: Request) raises -> Response:
             if r.repos > top:
                 top = r.repos
         h.write(
+            "<h2>By month and version</h2>",
             "<div class=tbl><table><thead><tr><th>Month</th><th>Version</th>",
-            "<th>Libraries</th></tr></thead><tbody>",
+            "<th>Libraries migrating</th></tr></thead><tbody>",
         )
         var last_month = String()
         for ref r in rows:
@@ -352,7 +574,7 @@ def versions_json(req: Request) raises -> Response:
             if not first:
                 out += ","
             first = False
-            out.write('{"month":', _q(r.month), ',"version":', _q(r.version), ',"libraries":', r.repos, "}")
+            out.write('{"month":', _q(r.month), ',"version":', _q(r.version), ',"family":', _q(version_family(r.version)), ',"libraries":', r.repos, "}")
         out += "]"
         return ok_json(out)
     except e:
@@ -518,7 +740,7 @@ comptime ORCA_UI = "https://orca.mlake.dev"
 comptime GH = "https://github.com/magmalake"
 
 comptime HOW = (
-    "<div class=prose><h1>How it works</h1><p class=lead>The census is three"
+    "<div class=prose><p class=lead>The census is three"
     " pipelines and this page, all Mojo. The pipelines run on <a href='"
     + ORCA_DOCS
     + "' rel=noopener>orca</a>, magmalake's pipeline orchestrator, on AWS; they"
@@ -559,57 +781,127 @@ comptime HOW = (
     + "/mojo-census' rel=noopener>magmalake/mojo-census</a>, and the <a"
     " href='https://mlake.dev/getting-started/' rel=noopener>getting-started"
     " guide</a> builds it from scratch.</p>"
-    "<h2 id=optimization>Optimization</h2>"
-    "<p>The first runs on AWS showed each hour's task bound to one of the"
-    " worker's four cores, with the Parquet write its largest stage. <a href='"
-    + GH
-    + "/mojo-census/pull/4' rel=noopener>mojo-census #4</a> streams each hour"
-    " through gunzip and parsing as it downloads and writes the files on the"
-    " workers (<a href='"
-    + GH
-    + "/mojo-census/pull/4#six-hours-local-server' rel=noopener>six hours"
-    " locally, 10.3 s to 4.5 s</a>). In the libraries, <a href='"
-    + GH
-    + "/parquet.mojo/pull/59' rel=noopener>parquet #59</a> streams row groups"
-    " out, splits string columns into pages by their size and encodes pages on"
-    " threads (<a href='"
-    + GH
-    + "/parquet.mojo/pull/59#measurements-apple-m4-mojo-120' rel=noopener>a"
-    " 50,000-row batch, 198 ms to 81 ms and 828 MB to 463 MB</a>); <a href='"
-    + GH
-    + "/iceberg.mojo/pull/71' rel=noopener>iceberg #71</a> writes a batch"
-    " without copying it and <a href='"
-    + GH
-    + "/iceberg.mojo/pull/72' rel=noopener>#72</a> writes through the streaming"
-    " writer on every core (<a href='"
-    + GH
-    + "/iceberg.mojo/pull/71#measurements-apple-m4-mojo-120' rel=noopener>an"
-    " hour of GH Archive, 850 ms to 375 ms and 1.4 GB to 0.5 GB at peak</a>);"
-    " <a href='"
-    + GH
-    + "/deflate.mojo/pull/10' rel=noopener>deflate #10</a> and <a href='"
-    + GH
-    + "/deflate.mojo/pull/12' rel=noopener>#12</a> add streaming inflate and a"
-    " faster decode loop (<a href='"
-    + GH
-    + "/deflate.mojo/pull/12#numbers-apple-m4' rel=noopener>gunzip of an hour,"
-    " 553 ms to 336 ms</a>); and <a href='"
-    + GH
-    + "/iceberg.mojo/pull/70' rel=noopener>iceberg #70</a> with <a href='"
-    + GH
-    + "/orca.mojo/pull/114' rel=noopener>orca #114</a> let workers hand their"
-    " data files to the step to commit. On the c7g.xlarge workers, at about"
-    " 85,000 events an hour, the median hour went from 1,094 ms to 680 ms and"
-    " its write from 570 ms to 256 ms (<a href='"
-    + ORCA_UI
-    + "/runs/36' rel=noopener>run 36</a> before, <a href='"
-    + ORCA_UI
-    + "/runs/48' rel=noopener>run 48</a> after).</p></div>"
+    "<p>How the pipelines got faster, with the measurements, is on the <a"
+    " href='/how/optimizations'>Optimizations</a> tab.</p></div>"
 )
 
 
+def _how_head(current: String) -> String:
+    """The title and the tabs shared by the two How it works pages."""
+    return String(
+        "<h1>How it works</h1><nav class=tabs aria-label='How it works'>",
+        _nav("/how", "Overview", current == "overview"),
+        _nav("/how/optimizations", "Optimizations", current == "optimizations"),
+        "</nav>",
+    )
+
+
+def _link(href: String, text: String) -> String:
+    return String("<a href='", href, "' rel=noopener>", text, "</a>")
+
+
+def _change(
+    what: String, did: String, measured: String, prs: String
+) -> String:
+    """A row of the changes table; every cell is HTML."""
+    return String(
+        "<tr><td class=what>", what, "</td><td class='what'>", did,
+        "</td><td class=soft>", measured, "</td><td>", prs, "</td></tr>",
+    )
+
+
+def _stage(name: String, before: String, after: String) -> String:
+    return String(
+        "<tr><td>", name, "</td><td class=num>", before, "</td><td class=num>", after, "</td></tr>"
+    )
+
+
 def how(req: Request) raises -> Response:
-    return _page("How it works", String(HOW), "how")
+    return _page("How it works", _how_head("overview") + String(HOW), "how")
+
+
+def optimizations(req: Request) raises -> Response:
+    var pr_census = String(GH, "/mojo-census/pull/4")
+    var pr_parquet = String(GH, "/parquet.mojo/pull/59")
+    var pr_ice71 = String(GH, "/iceberg.mojo/pull/71")
+    var h = _how_head("optimizations")
+    h.write(
+        "<p class=lead>The first runs on AWS showed each hour's task bound to one of the worker's",
+        " four cores, with the Parquet write its largest stage. These changes spread the work",
+        " over the cores and stopped copying it; each row links its pull request and the",
+        " measurement table in its description.</p>",
+        "<h2>One gharchive hour on AWS</h2>",
+        "<p class=sub>c7g.xlarge workers, about 85,000 events an hour, median of 24 hours.</p>",
+        "<div class=tbl><table><thead><tr><th>Stage</th><th class=num>Before (",
+        _link(String(ORCA_UI, "/runs/36"), "run 36"), ")</th><th class=num>After (",
+        _link(String(ORCA_UI, "/runs/48"), "run 48"), ")</th></tr></thead><tbody>",
+        _stage("task", "1,094 ms", "680 ms"),
+        _stage("download", "172 ms", "130 ms"),
+        _stage("gunzip", "210 ms", "154 ms"),
+        _stage("parse", "160 ms", "134 ms"),
+        _stage("write", "570 ms", "256 ms"),
+        _stage("commit", "486 ms", "683 ms"),
+        "</tbody></table></div>",
+        "<p class='mute note'>Commit time grows with the table's snapshot count: ",
+        _link(String(ORCA_UI, "/runs/133"), "run 133"),
+        ", after the latest release, measured 1,207 ms for the commit with the other stages",
+        " unchanged. Under investigation.</p>",
+        "<h2>The changes</h2><div class=tbl><table><thead><tr><th>Change</th><th>What it did</th>",
+        "<th>Measured (Apple M4)</th><th>PR</th></tr></thead><tbody>",
+        _change(
+            "mojo-census #4",
+            "Streams each hour through gunzip and parsing as it downloads, and writes Parquet on the workers.",
+            _link(pr_census + "#six-hours-local-server", "Six hours locally, 10.3 s to 4.5 s with 4 tasks"),
+            _link(pr_census, "#4"),
+        ),
+        _change(
+            "parquet #59",
+            "Streams row groups, splits string pages by size, encodes pages on threads.",
+            _link(
+                pr_parquet + "#measurements-apple-m4-mojo-120",
+                "50,000-row batch encode 198 to 81 ms (4 threads), peak 828 to 463 MB",
+            ),
+            _link(pr_parquet, "#59"),
+        ),
+        _change(
+            "iceberg #71",
+            "Writes a batch without copying it.",
+            _link(
+                pr_ice71 + "#measurements-apple-m4-mojo-120",
+                "One hour 838&ndash;855 to 783&ndash;804 ms, peak 1.30&ndash;1.51 to 0.96&ndash;0.97 GB",
+            ),
+            _link(pr_ice71, "#71"),
+        ),
+        _change(
+            "iceberg #72",
+            "Writes through the streaming writer on every core.",
+            "One hour to 375 ms, peak about 0.5 GB (with #59, 4 threads)",
+            _link(String(GH, "/iceberg.mojo/pull/72"), "#72"),
+        ),
+        _change(
+            "deflate #10, #12",
+            "Streaming inflate, and a faster decode loop.",
+            _link(
+                String(GH, "/deflate.mojo/pull/12#numbers-apple-m4"),
+                "Gunzip of an hour 553 to 336 ms (1.46 GB/s)",
+            ),
+            String(
+                _link(String(GH, "/deflate.mojo/pull/10"), "#10"), ", ",
+                _link(String(GH, "/deflate.mojo/pull/12"), "#12"),
+            ),
+        ),
+        _change(
+            "iceberg #70 + orca #114",
+            "Workers hand their data files to the step to commit (<code>append_files</code>), which removes the census's own DataFile codec.",
+            "<span class=mute>&ndash;</span>",
+            String(
+                _link(String(GH, "/iceberg.mojo/pull/70"), "iceberg #70"), ", ",
+                _link(String(GH, "/orca.mojo/pull/114"), "orca #114"),
+            ),
+        ),
+        "</tbody></table></div>",
+    )
+    return _page("Optimizations", h^, "how")
 
 
 def main() raises:
@@ -617,9 +909,12 @@ def main() raises:
     r.get("/", index)
     r.get("/versions", versions)
     r.get("/how", how)
+    r.get("/how/optimizations", optimizations)
+    r.get("/search", search)
     r.get("/repos/:owner/:name", repo_page)
     r.get("/api/repos", index_json)
     r.get("/api/versions", versions_json)
+    r.get("/api/search", search_json)
     r.get("/api/repos/:owner/:name", repo_json)
     var addr = String("0.0.0.0:", getenv("PORT", "8080"))
     var server = HttpServer.bind(SocketAddr.parse(addr), ServerConfig())
