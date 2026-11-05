@@ -18,12 +18,9 @@ from std.time import perf_counter_ns
 
 from dista import ObjectRef, Task
 from orca import Ctx, Daily, Day, Mapped, Pipeline, Step, Tasks, orca_main
-from orca.tables import ensure_table, load_dataset, scan, table
-from parquet import RecordBatch
+from orca.tables import ensure_table, scan, table
 
-from cols import col, i64_at, str_at, str_range
-from days import day_text, days_of
-from hourindex import HourIndex, IndexFiles, write_index
+from hourindex import IndexFiles
 from indexing import commit_hour, committed_hours, day_files
 from lake import (
     CANDIDATES,
@@ -38,61 +35,7 @@ from lake import (
     repo_hour_schema,
     repo_hour_spec,
 )
-
-
-def _fold(mut index: HourIndex, b: RecordBatch, lo: Int64) raises:
-    ref ty = b.column(col(b, "type"))
-    ref rp = b.column(col(b, "repo"))
-    ref ac = b.column(col(b, "actor"))
-    ref at = b.column(col(b, "created_at"))
-    ref pl = b.column(col(b, "payload"))
-    var pv = Span(pl.values)
-    for r in range(b.num_rows):
-        var at_r = i64_at(at, r)
-        if at_r < lo or at_r >= lo + 3_600_000_000:
-            continue  # the filter keeps whole row groups
-        var pr = str_range(pl, r)
-        index.add(
-            str_at(ty, r), str_at(rp, r), str_at(ac, r), at_r,
-            pv[pr[0] : pr[1]],
-        )
-
-
-def index_hour(job: String) raises -> IndexFiles:
-    """On a worker: one hour of `gharchive.events` (at the snapshot in `job`,
-    `day\\nhour\\nsnapshot`) as index files, uncommitted."""
-    var parts = job.split("\n")
-    var day = String(parts[0])
-    var hour = Int(parts[1])
-    var snapshot = Int64(Int(parts[2]))
-    var lo = days_of(day) * 86_400_000_000 + Int64(hour) * 3_600_000_000
-    var index = HourIndex(lo)
-    try:
-        var events = load_dataset(EVENTS)
-        var filter = String(
-            '["and",[">=","created_at",', lo, '],["<","created_at",',
-            lo + 3_600_000_000, "]]",
-        )
-        var reader = (
-            events.scan()
-            .use_snapshot(snapshot)
-            .filter(filter)
-            .select(["type", "repo", "actor", "created_at", "payload"])
-            .to_batch_reader()
-        )
-        while True:
-            var next = reader.next_batch()
-            if not next:
-                break
-            _fold(index, next.take(), lo)
-        return write_index(
-            index,
-            load_dataset(CANDIDATES),
-            load_dataset(REPO_HOUR),
-            load_dataset(GH_RELEASES),
-        )
-    except e:
-        raise Error(day, " hour ", hour, ": ", e)
+from reindex import index_hour, index_job
 
 
 comptime IndexHour = Task[String, IndexFiles, index_hour]
@@ -135,14 +78,14 @@ def index_day(mut ctx: Ctx, d: Day) raises -> Int64:
     var refs = List[ObjectRef[IndexFiles]]()
     var next = done
     while next < n and next - done < window:
-        refs.append(rt.remote[IndexHour](String(day, "\n", next, "\n", pinned)))
+        refs.append(rt.remote[IndexHour](index_job(day, next, pinned, True)))
         next += 1
     var rows = Int64(0)
     for i in range(done, n):
         var got = rt.get(refs[i - done])
         rt.release(refs[i - done])
         if next < n:
-            refs.append(rt.remote[IndexHour](String(day, "\n", next, "\n", pinned)))
+            refs.append(rt.remote[IndexHour](index_job(day, next, pinned, True)))
             next += 1
         try:
             _ = commit_hour(ctx, cand_t, i, d_cand, old_cand, got.candidates.files)

@@ -15,7 +15,7 @@ from fetch import Download
 from deflate import MARGIN, GzipReader, InflateStatus
 from gzstream import GzInput, Whole
 from hourindex import HourIndex, write_index
-from jscan import Range, days_from_civil, find_newline, scan_event, text, timestamp_micros
+from jscan import Range, find_newline, scan_event, text, timestamp_micros
 from lake import events_schema
 
 comptime ROWS_PER_BATCH = 50_000
@@ -387,11 +387,8 @@ def fetch_hour(
     var t0 = perf_counter_ns()
     var dl = Download(hour_url(day, hour))
     var w = TableWriter(table)
-    var index = HourIndex(
-        Int64(days_from_civil(Int(day[byte=0:4]), Int(day[byte=5:7]), Int(day[byte=8:10])))
-        * 86_400_000_000
-        + Int64(hour) * 3_600_000_000
-    )
+    # No marker rows: the step commits the index a day at a time.
+    var index = HourIndex()
     var timing = decode_index(dl, w, index, True)
     var out = w^.finish()
     var t_index = perf_counter_ns()

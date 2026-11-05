@@ -38,19 +38,26 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   (`id`, `type`, `created_at`, `repo`, `actor`, `payload` as JSON text),
   partitioned by day. A day's hours are dista tasks: each streams its
   hour in on a reader thread while it gunzips and parses what has
-  arrived, a window at a time, and writes the Parquet files on the worker; the step commits each hour's files as one append,
-  in order, and a retry skips the hours already committed. A new run of a
-  day that has rows (`orca backfill --rerun`) replaces them: its first
-  hour's commit removes the day's earlier files.
-  While an hour's task parses its events it also builds three small tables,
-  written and committed with the events (one snapshot an hour each):
-  `gharchive.candidates` (one row per repository, hour and reason: the
+  arrived, a window at a time, and writes the Parquet files on the worker; the step commits each hour's files
+  to the events as one append, in order, and a retry skips the hours already
+  committed. A new run of a day that has rows (`orca backfill --rerun`)
+  replaces them: its first hour's commit removes the day's earlier files.
+  While an hour's task parses its events it also builds three small tables'
+  rows: `gharchive.candidates` (one row per repository, hour and reason: the
   `detect.scan_event` rules below), `gharchive.repo_hour` (the counts
   `mojo.activity` needs, per repository, actor and hour, of **every**
   repository: about 100K rows an hour, sorted, so a repository found later
   has its whole history without reading events again) and `gharchive.releases`
-  (published ReleaseEvents). An hour with nothing for a table writes one
-  row for no repository (`repo = ""`) so every hour has a snapshot.
+  (published ReleaseEvents). The step keeps those files and commits each of
+  the three tables **once a day**, at the end, with all the hours' files (the
+  day's first commit to each replaces the day's earlier files, as for the
+  events). That is one snapshot a table instead of 24, which took about 40 s
+  of a day's 80. A retry that skips hours of events committed by the failed
+  attempt builds their rows again from `gharchive.events` (the code
+  gharchive_index uses), and finds the day's index commits if the attempt
+  made them, so they aren't made twice. A day with no rows at all for a
+  table gets one row for no repository (`repo = ""`), since a snapshot needs
+  a data file.
 - **`pipelines/gharchive_index.mojo`**: a one-off that fills those three
   tables for days loaded before gharchive wrote them, reading each hour of
   `gharchive.events` once (`orca backfill gharchive_index <days>`).
@@ -155,6 +162,10 @@ ORCA_WAREHOUSE=s3://mlake-public-617847241090/warehouse PORT=8080 pixi run ./bui
 ```
 
 ### The pipelines on their own
+
+`pixi run test-daily` (network, about a minute) checks gharchive's day
+commits against `origin/main`'s hourly ones on three hours, through a
+failed-and-retried step and a rerun (`scripts/test-daily.sh`).
 
 No database needed; `GHARCHIVE_HOURS` keeps the download to two hourly files
 (about 100 MB each):

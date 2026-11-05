@@ -635,6 +635,10 @@ an hour or needs reading library source), **low** (friction).
   (`hourindex.HourIndex.marker`).
 - **Fix:** iceberg should commit an empty append (a snapshot with no
   manifest), or write a zero-row file; orca's docstring says it can.
+- **Since:** gharchive commits its index tables once a day, not an hour, so
+  only a day with nothing at all for a table needs the marker (one row, for
+  the day's first hour); gharchive_index still commits an hour at a time and
+  keeps one per empty hour.
 
 ## 33. A repository found later needs every repository's history, so the index is big (medium)
 
@@ -648,6 +652,11 @@ an hour or needs reading library source), **low** (friction).
   (...)` plus a day range, reading a few row groups of each hour's file.
   mojo_activity's catch-up still makes a dista task per loaded day (24 small
   files each); it no longer reads event bytes.
+- **Since:** the three index tables are committed once a day by gharchive
+  (24 hours' files in one snapshot, instead of 24 snapshots): 4 commits per
+  hour cost ~1.7 s on AWS, ~41 s of an ~81 s day, serially. The files stay
+  one per hour; the commits are not concurrent (a `Ctx` and its commit
+  numbering aren't thread-safe).
 - **Fix:** a daily compaction of `gharchive.repo_hour` into one file per
   day (or `bucket[N](repo)` partitions) would cut a catch-up from 24 file
   opens per day to one, and iceberg's `in` on a bucketed column would prune
