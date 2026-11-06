@@ -159,6 +159,14 @@ the census's own open work is in [this repository's issues](https://github.com/m
 
 ## Run it locally
 
+[Develop locally](https://mlake.dev/getting-started/develop) on mlake.dev
+covers this section with timings, what needs the network, and how to try a
+change to orca, iceberg or parquet in the census before it is released. It
+builds for macOS arm64 and linux-aarch64 (`pixi.toml`'s platforms); there is
+no linux-64 build. The first `pixi run build` compiles every dependency and
+takes about nine minutes and 19 GB under `.pixi` (`.pixi/bld`, 18 GB of it, is
+build scratch).
+
 You need [pixi](https://pixi.sh) and the mojoshelf CLI (`pixi global install
 --channel https://mojoshelf.org/channel mojoshelf`). Build inside the pixi
 environment; the built binaries also run from a plain shell (since
@@ -185,9 +193,19 @@ ORCA_WAREHOUSE=s3://mlake-public-617847241090/warehouse PORT=8080 pixi run ./bui
 
 ### The pipelines on their own
 
-`pixi run test-daily` (network, about a minute) checks gharchive's day
-commits against `origin/main`'s hourly ones on three hours, through a
-failed-and-retried step and a rerun (`scripts/test-daily.sh`).
+`pixi run test-daily` (network, three hours of GH Archive, about 50 seconds)
+checks gharchive's day commits against a gharchive that commits an hour at a
+time, through a failed-and-retried step and a rerun (`scripts/test-daily.sh`).
+It needs that older build as `build/gharchive-main`, and `origin/main` no
+longer is one (it already commits daily, and the check fails with "old
+gharchive.candidates: not three snapshots"). Build the commit before the
+change:
+
+```sh
+mkdir -p build/main-src && git archive 8922605~1 | tar -x -C build/main-src
+pixi run mojo build -I build/main-src/src build/main-src/pipelines/gharchive.mojo -o build/gharchive-main
+pixi run test-daily
+```
 
 No database needed; `GHARCHIVE_HOURS` keeps the download to two hourly files
 (about 100 MB each):
@@ -198,9 +216,15 @@ GHARCHIVE_HOURS=15,17 pixi run ./build/gharchive run --partitions 2024-06-12
 pixi run ./build/mojo_repos run --partitions 2024-06-12
 MOJO_HISTORY_MAX_KB=100000 pixi run ./build/mojo_history run --partitions @all
 pixi run ./build/mojo_activity run --partitions 2024-06-12
-pixi run ./build/mojo_stats run --partitions 2024-06-12   # GITHUB_TOKEN helps
+pixi run ./build/mojo_versions run --partitions @all
+pixi run ./build/mojo_stats run --partitions $(date +%F)   # GITHUB_TOKEN helps
 PORT=8080 pixi run ./build/console      # http://127.0.0.1:8080
 ```
+
+mojo_stats takes today's date: its partitions start on 2026-11-01, and a
+date before that is refused. Without a token mojo_repos checks 25 candidates
+a run (1000 with `GITHUB_TOKEN`). The whole sequence takes about 40 seconds
+once the download is under way.
 
 ### The orca way: Postgres, the scheduler and the UI
 
@@ -217,7 +241,8 @@ pixi run createdb -h "$PWD/build" -U postgres orca
 under `build/`, `GHARCHIVE_HOURS=15,17`, `MOJO_HISTORY_MAX_KB=100000` (skips
 modular/modular, which is over a gigabyte) and a 10-second sense interval.
 Register the pipelines **before** loading data (a sensor only counts
-snapshots made after it is registered), then backfill one day:
+snapshots made after it is registered; if you ran the pipelines on their own
+above, delete `build/warehouse` first), then backfill one day:
 
 ```sh
 pixi shell
