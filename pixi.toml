@@ -50,7 +50,7 @@ sqlite-mojo = { git = "https://github.com/magmalake/sqlite.mojo.git", rev = "0d7
 avro-mojo = { git = "https://github.com/magmalake/avro.mojo.git", rev = "d5b26ccefa8c49cc3af517731f5df104762119e0" }
 roaring-mojo = { git = "https://github.com/magmalake/roaring.mojo.git", rev = "a90a7bd30cf1c21403a29059282072e93fbeeee2" }
 hashes-mojo = { git = "https://github.com/magmalake/hashes.mojo.git", rev = "395aca597f9410bd0511df44d972f14b10a8b01d" }
-iceberg-mojo = { git = "https://github.com/magmalake/iceberg.mojo.git", rev = "ad91f13aea00f2b41427d163e9e550da83f59fc7" }
-orca-mojo = { git = "https://github.com/magmalake/orca.mojo.git", rev = "3f5d4f623370b2ec81a3b8ea407c4a79ed838a1e" }
+iceberg-mojo = { git = "https://github.com/magmalake/iceberg.mojo.git", rev = "bb361f975f9f56d33218850a5f3d048202a85f02" }
+orca-mojo = { git = "https://github.com/magmalake/orca.mojo.git", rev = "16db8ec14add7ddc7b6e55a7fad8c4261e805f03" }
 postgresql = ">=18.4,<19"
 git = ">=2.56.0,<3"
