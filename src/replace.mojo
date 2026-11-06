@@ -9,7 +9,8 @@ doesn't write again.
 
 This is safe for one writer per table at a time; the pipelines that use it
 run one run at a time (`max_runs=1`). Two writers that read before either
-commits would both keep the other's rows (GAPS.md).
+commits would both keep the other's rows (magmalake/orca.mojo#120, orca's
+replace mode, and magmalake/iceberg.mojo#83).
 """
 
 from iceberg.catalog.filesystem import Table

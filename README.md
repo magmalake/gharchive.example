@@ -152,8 +152,10 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   partition (how 2026-10-13, loaded twice before gharchive replaced a
   rerun's day, was repaired).
 
-[GAPS.md](GAPS.md) lists what the magmalake skills and libraries were missing
-while this was built.
+What the magmalake libraries were missing while this was built is tracked as
+GitHub issues in each library's repository (orca.mojo, iceberg.mojo,
+dista.mojo, json_mlake, flare_mlake, deflate.mojo, threads.mojo, and mojoshelf);
+the census's own open work is in [this repository's issues](https://github.com/magmalake/mojo-census/issues).
 
 ## Run it locally
 
@@ -255,8 +257,8 @@ Set `GITHUB_TOKEN` to lift the limit. Stop everything with
 On 2024-06-12, hours 15 and 17: 476,227 events (154 MB of Parquet), 23
 candidates, 4 Mojo repositories (NuMojo, Mojonet, mojo-flx and
 modular/modular, which was skipped for size), 3 histories read, 372
-commits and 27 migrations. The end of [GAPS.md](GAPS.md) has the run as the
-scheduler did it, on orca 0.3.1.
+commits and 27 migrations. [docs/first-local-run.md](docs/first-local-run.md)
+has the run as the scheduler did it, on orca 0.3.1.
 
 ## Table history
 
