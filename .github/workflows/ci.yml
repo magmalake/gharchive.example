@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['*']
   pull_request:
 
 jobs:
@@ -24,10 +25,20 @@ jobs:
   # rather than on AWS.
   image:
     runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    env:
+      GHCR_IMAGE: ghcr.io/magmalake/orca
     steps:
       - uses: actions/checkout@v4
       - name: Build the image
-        run: docker build -f Dockerfile.orca -t gharchive-image .
+        run: |
+          docker build -f Dockerfile.orca -t gharchive-image \
+            --build-arg ORCA_SOURCE="https://github.com/${{ github.repository }}" \
+            --build-arg ORCA_COMMIT="${{ github.sha }}" \
+            --label org.opencontainers.image.source="https://github.com/${{ github.repository }}" \
+            --label org.opencontainers.image.revision="${{ github.sha }}" .
       - name: Size
         run: docker image ls gharchive-image --format '{{.Size}}'
       - name: One hour of 2025-01-01 inside the image
@@ -45,3 +56,26 @@ jobs:
           done
           docker logs console
           exit 1
+      # What deploy/hetzner expects in orca.mojo: ghcr.io/magmalake/orca:<tag>.
+      # Pushed from the image tested above (native arm64), on main and on tags
+      # only; pull requests build and test but never push.
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push to GHCR
+        if: github.event_name == 'push'
+        run: |
+          tags="${GITHUB_SHA::7}"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tags="$tags ${GITHUB_REF_NAME#v}"
+          else
+            tags="$tags latest"
+          fi
+          for t in $tags; do
+            docker tag gharchive-image "$GHCR_IMAGE:$t"
+            docker push "$GHCR_IMAGE:$t"
+          done
