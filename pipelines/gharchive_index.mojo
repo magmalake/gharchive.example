@@ -32,6 +32,7 @@ from lake import (
     gh_releases_schema,
     gh_releases_spec,
     index_properties,
+    repo_hour_properties,
     repo_hour_schema,
     repo_hour_spec,
 )
@@ -54,7 +55,11 @@ def index_day(mut ctx: Ctx, d: Day) raises -> Int64:
         ctx, CANDIDATES, candidates_schema(), candidates_spec(), props
     )
     var hour_t = ensure_table(
-        ctx, REPO_HOUR, repo_hour_schema(), repo_hour_spec(), props
+        ctx,
+        REPO_HOUR,
+        repo_hour_schema(),
+        repo_hour_spec(),
+        repo_hour_properties(),
     )
     var rel_t = ensure_table(
         ctx, GH_RELEASES, gh_releases_schema(), gh_releases_spec(), props

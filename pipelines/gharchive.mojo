@@ -40,6 +40,7 @@ from iceberg.manifest import DataFile
 from orca.tables import ensure_table, find_commit, load_dataset
 
 from datafiles import DataFiles
+from daymerge import merge_job, merge_repo_hour
 from days import days_of
 from events import fetch_hour, parse_hours
 from hourindex import IndexFiles, write_marker
@@ -57,6 +58,7 @@ from lake import (
     gh_releases_schema,
     gh_releases_spec,
     index_properties,
+    repo_hour_properties,
     repo_hour_schema,
     repo_hour_spec,
 )
@@ -80,7 +82,8 @@ def hour_task(day: String, hour: Int) raises -> DataFiles:
 
 comptime IndexHour = Task[String, IndexFiles, index_hour]
 comptime Hour = Task2[String, Int, DataFiles, hour_task]
-comptime GhTasks = Tasks[Hour, IndexHour]
+comptime MergeHours = Task[String, IndexFiles, merge_repo_hour]
+comptime GhTasks = Tasks[Hour, IndexHour, MergeHours]
 
 
 def _marker_if_empty(
@@ -102,7 +105,11 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
         ctx, CANDIDATES, candidates_schema(), candidates_spec(), props
     )
     var hour_t = ensure_table(
-        ctx, REPO_HOUR, repo_hour_schema(), repo_hour_spec(), props
+        ctx,
+        REPO_HOUR,
+        repo_hour_schema(),
+        repo_hour_spec(),
+        repo_hour_properties(),
     )
     var rel_t = ensure_table(
         ctx, GH_RELEASES, gh_releases_schema(), gh_releases_spec(), props
@@ -199,7 +206,8 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
                 len(got.files), " files, snapshot ", id, " (task ",
                 got.total_ms, " ms: download ", got.download_ms,
                 " ms overlapping gunzip ", got.gunzip_ms, " ms, parse ",
-                got.parse_ms, " ms, write ", got.write_ms, " ms, index ",
+                got.parse_ms, " ms, sort ", got.sort_ms, " ms, write ",
+                got.write_ms, " ms, index ",
                 got.index_ms, " ms: ", got.index.candidate_rows,
                 " candidates, ", got.index.repo_hour_rows, " repo-hours, ",
                 got.index.release_rows, " releases; waiting ", got.wait_ms,
@@ -220,6 +228,21 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
         cand.extend(f.candidates.files.copy())
         per_hour.extend(f.repo_hour.files.copy())
         rel.extend(f.releases.files.copy())
+    if not indexed and len(per_hour) > 1:
+        # The day's repo_hour rows as one file: a dictionary needs more rows
+        # than an hour has to pay for itself.
+        var paths = List[String]()
+        for ref f in per_hour:
+            paths.append(f.file_path)
+        var merging = rt.remote[MergeHours](merge_job(paths))
+        var merged = rt.get(merging)
+        rt.release(merging)
+        per_hour = merged.repo_hour.files.copy()
+        ctx.log(String(
+            day, ": repo_hour merged from ", len(paths), " files to ",
+            len(per_hour), " (", merged.repo_hour_rows, " rows, ",
+            merged.write_ms, " ms)",
+        ))
     if not indexed:
         _marker_if_empty(cand, day, 0, cand_t)
         _marker_if_empty(per_hour, day, 1, hour_t)

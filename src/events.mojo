@@ -386,7 +386,10 @@ def fetch_hour(
     uncommitted."""
     var t0 = perf_counter_ns()
     var dl = Download(hour_url(day, hour))
-    var w = TableWriter(table)
+    # Each 50,000-row file is in (repo, type) order: a repository's events
+    # repeat its URLs, and rows that resemble each other share a page. On
+    # real files that is 7% smaller than (type, repo), 18% than arrival order.
+    var w = TableWriter(table, "repo", "type")
     # No marker rows: the step commits the index a day at a time.
     var index = HourIndex()
     var timing = decode_index(dl, w, index, True)
