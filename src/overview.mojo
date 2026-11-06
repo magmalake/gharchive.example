@@ -62,17 +62,32 @@ def tool_code(tooling: String) -> UInt8:
     return TOOL_NONE
 
 
-def bucket_of(version: String) -> String:
-    """The version bucket of `version`, or `unknown` for no version."""
+comptime NO_MANIFEST = "no-manifest"
+comptime UNKNOWN = "unknown"
+
+
+def unversioned(commits: Int, tool: UInt8) -> String:
+    """Why a repository has no version: `no-manifest` if its history was read
+    and has no manifest or lock file (nothing where the census looks), else
+    `unknown` (it has a manifest that names no Mojo version, or its history
+    isn't read yet)."""
+    if commits > 0 and tool == TOOL_NONE:
+        return String(NO_MANIFEST)
+    return String(UNKNOWN)
+
+
+def bucket_of(version: String, why: String = String(UNKNOWN)) -> String:
+    """The version bucket of `version`, or `why` (`unknown`, `no-manifest`)
+    for no version."""
     if version.byte_length() == 0:
-        return String("unknown")
+        return why
     return version_bucket(version)
 
 
-def family_of(version: String) -> String:
-    """The Mojo version family of `version`, or `unknown` for no version."""
+def family_of(version: String, why: String = String(UNKNOWN)) -> String:
+    """The Mojo version family of `version`, or `why` for no version."""
     if version.byte_length() == 0:
-        return String("unknown")
+        return why
     return version_family(version)
 
 
@@ -93,6 +108,10 @@ struct RepoAcc(Copyable, Movable):
     var commits30: Int
     var commits60: Int
     """Commits 30 to 60 days ago."""
+    var estimate: String
+    """The release current at the last Mojo commit, by date; a guess."""
+    var tool: UInt8
+    """The tooling (`tool_code`) at the newest commit."""
 
 
 struct Overview(Movable):
@@ -121,6 +140,14 @@ struct Overview(Movable):
     """The same repos by the old families (`24.x`, `0.26.x`, `1.x`), for the JSON."""
     var family_repos: List[Int]
     var family_active: List[Int]
+    var est_buckets: List[String]
+    """`buckets` again, a repository with no detected version counted under
+    the release its date estimates (`?estimate=1`)."""
+    var est_bucket_repos: List[Int]
+    var est_bucket_active: List[Int]
+    var est_families: List[String]
+    var est_family_repos: List[Int]
+    var est_family_active: List[Int]
     var months: List[String]
     var lines_series: List[Int64]
     var repos_series: List[Int64]
@@ -148,6 +175,12 @@ struct Overview(Movable):
         self.families = List[String]()
         self.family_repos = List[Int]()
         self.family_active = List[Int]()
+        self.est_buckets = List[String]()
+        self.est_bucket_repos = List[Int]()
+        self.est_bucket_active = List[Int]()
+        self.est_families = List[String]()
+        self.est_family_repos = List[Int]()
+        self.est_family_active = List[Int]()
         self.months = List[String]()
         self.lines_series = List[Int64]()
         self.repos_series = List[Int64]()
@@ -187,7 +220,7 @@ struct Builder(Movable):
 
     def add_repo(mut self, name: String) -> Int:
         """A repository of mojo.repos; the id to give `add_commit`."""
-        self.accs.append(RepoAcc(name, 0, 0, -1, 0, 0, String(), -1, 0, 0, 0))
+        self.accs.append(RepoAcc(name, 0, 0, -1, 0, 0, String(), -1, 0, 0, 0, String(), 0))
         var n = len(self.cell_seq) + self.months
         self.cell_seq.resize(n, -1)
         self.cell_lines.resize(n, 0)
@@ -221,6 +254,7 @@ struct Builder(Movable):
             a.last_at = at
             a.last_lines = lines
             a.version = version
+            a.tool = tool
         if at > self.cut30:
             a.commits30 += 1
         elif at > self.cut60:
@@ -228,6 +262,13 @@ struct Builder(Movable):
         if at <= self.cut30 and seq >= a.cut_seq:
             a.cut_seq = seq
             a.cut_lines = lines
+
+    def set_version(mut self, id: Int, version: String, estimate: String):
+        """The version the repository states (the one its newest commit's
+        lock file or manifest names, else what the files at HEAD say) and the
+        estimate by date; replaces what `add_commit` set."""
+        self.accs[id].version = version
+        self.accs[id].estimate = estimate
 
     def finish(self, repos: Int) -> Overview:
         """The overview, for `repos` repositories in mojo.repos."""
@@ -257,12 +298,27 @@ struct Builder(Movable):
         # Buckets and families: every repository, including the ones not read.
         var bg = Groups()
         var fg = Groups()
+        var ebg = Groups()
+        var efg = Groups()
         for ref a in self.accs:
             var is_active = a.commits > 0 and a.last_at >= self.cut_active
-            bg.add(bucket_of(a.version), a.version, is_active)
-            fg.add(family_of(a.version), a.version, is_active)
+            var why = unversioned(a.commits, a.tool)
+            bg.add(bucket_of(a.version, why), a.version, is_active)
+            fg.add(family_of(a.version, why), a.version, is_active)
+            # With the estimate: a repository with no version gets its date's.
+            var ev = a.version if a.version.byte_length() > 0 else a.estimate
+            ebg.add(bucket_of(ev, why), ev, is_active)
+            efg.add(family_of(ev, why), ev, is_active)
         _order(bg, True)
         _order(fg, False)
+        _order(ebg, True)
+        _order(efg, False)
+        o.est_buckets = ebg.names.copy()
+        o.est_bucket_repos = ebg.repos.copy()
+        o.est_bucket_active = ebg.active.copy()
+        o.est_families = efg.names.copy()
+        o.est_family_repos = efg.repos.copy()
+        o.est_family_active = efg.active.copy()
         o.buckets = bg.names.copy()
         o.bucket_repos = bg.repos.copy()
         o.bucket_active = bg.active.copy()
@@ -353,9 +409,13 @@ def _order(mut g: Groups, buckets: Bool):
     var names = List[String]()
     var old = List[String]()
     var unknown = -1
+    var no_manifest = -1
     for i in range(len(g.names)):
         if g.names[i] == "unknown":
             unknown = i
+            continue
+        if g.names[i] == "no-manifest":
+            no_manifest = i
             continue
         names.append(g.names[i])
         old.append(g.oldest[i])
@@ -369,6 +429,10 @@ def _order(mut g: Groups, buckets: Bool):
         out.names.append(f)
         out.repos.append(g.repos[i])
         out.active.append(g.active[i])
+    if no_manifest >= 0:
+        out.names.append(String("no-manifest"))
+        out.repos.append(g.repos[no_manifest])
+        out.active.append(g.active[no_manifest])
     if unknown >= 0:
         out.names.append(String("unknown"))
         out.repos.append(g.repos[unknown])
@@ -385,6 +449,8 @@ def bucket_color(bucket: String) -> String:
         return String("var(--c0)")
     if bucket == "unknown":
         return String("var(--border-strong)")
+    if bucket == "no-manifest":
+        return String("var(--border)")
     if bucket == "other":
         return String("var(--c5)")
     var dot = bucket.find(".")

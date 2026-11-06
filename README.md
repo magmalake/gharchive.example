@@ -87,6 +87,26 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   mojo_history already read and replaces their rows (used when `tooling`
   learned `bazel`, a root `MODULE.bazel`/`WORKSPACE`/`BUILD.bazel`, which
   outranks pixi: `orca backfill --rerun mojo_retool @all`).
+- **`pipelines/mojo_versions.mojo`**: keyed by repository like mojo_history
+  (50 a run, a sensor on `mojo.repos`), for the repositories whose lock file
+  and manifest name no Mojo version (early projects, installed with `modular
+  install mojo` before magic and pixi: 105 of 211 in 2026-11). Each is
+  cloned without file contents and its HEAD read for a version: lock file,
+  manifest (also `pyproject.toml`, `requirements.txt`), a version file,
+  CI workflows, Dockerfiles and dev containers, README, in that order of
+  precedence (`versions.mojo`: `script_version`, `readme_version`,
+  `pick_version`); `modular/modular` states its own in `Mojo/pixi.lock`.
+  `mojo.repo_versions` has one row each: the version and its source (`lock`,
+  `manifest`, `file`, `ci`, `docker`, `readme`, `repo`) and the file, and
+  apart from them the release current at the last commit that touched a
+  Mojo file (`version_estimate`, source `date`, from the table in
+  `mojo_releases.mojo`). Rows are replaced like mojo_retool's, so
+  `orca backfill --rerun mojo_versions @all` fills the repositories already
+  in the lake and a rerun gives the same rows. The console shows the
+  detected version with its source ("24.4, from CI"), `no-manifest` apart
+  from `unknown`, and the estimate as "~24.3 by date" (the Overview's donuts
+  and `/repos?version=` count it with `?estimate=1`, off by default).
+  `tools/head_versions.mojo` tries the readers on named repositories.
 - **`pipelines/mojo_activity.mojo`**: daily, a sensor on
   `gharchive.repo_hour`, `gharchive.releases` and `mojo.repos`, no API calls
   and no event bytes. For each day, every repository in
@@ -132,10 +152,20 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   partition (how 2026-10-13, loaded twice before gharchive replaced a
   rerun's day, was repaired).
 
-[GAPS.md](GAPS.md) lists what the magmalake skills and libraries were missing
-while this was built.
+What the magmalake libraries were missing while this was built is tracked as
+GitHub issues in each library's repository (orca.mojo, iceberg.mojo,
+dista.mojo, json_mlake, flare_mlake, deflate.mojo, threads.mojo, and mojoshelf);
+the census's own open work is in [this repository's issues](https://github.com/magmalake/mojo-census/issues).
 
 ## Run it locally
+
+[Develop locally](https://mlake.dev/getting-started/develop) on mlake.dev
+covers this section with timings, what needs the network, and how to try a
+change to orca, iceberg or parquet in the census before it is released. It
+builds for macOS arm64 and linux-aarch64 (`pixi.toml`'s platforms); there is
+no linux-64 build. The first `pixi run build` compiles every dependency and
+takes about nine minutes and 19 GB under `.pixi` (`.pixi/bld`, 18 GB of it, is
+build scratch).
 
 You need [pixi](https://pixi.sh) and the mojoshelf CLI (`pixi global install
 --channel https://mojoshelf.org/channel mojoshelf`). Build inside the pixi
@@ -163,9 +193,19 @@ ORCA_WAREHOUSE=s3://mlake-public-617847241090/warehouse PORT=8080 pixi run ./bui
 
 ### The pipelines on their own
 
-`pixi run test-daily` (network, about a minute) checks gharchive's day
-commits against `origin/main`'s hourly ones on three hours, through a
-failed-and-retried step and a rerun (`scripts/test-daily.sh`).
+`pixi run test-daily` (network, three hours of GH Archive, about 50 seconds)
+checks gharchive's day commits against a gharchive that commits an hour at a
+time, through a failed-and-retried step and a rerun (`scripts/test-daily.sh`).
+It needs that older build as `build/gharchive-main`, and `origin/main` no
+longer is one (it already commits daily, and the check fails with "old
+gharchive.candidates: not three snapshots"). Build the commit before the
+change:
+
+```sh
+mkdir -p build/main-src && git archive 8922605~1 | tar -x -C build/main-src
+pixi run mojo build -I build/main-src/src build/main-src/pipelines/gharchive.mojo -o build/gharchive-main
+pixi run test-daily
+```
 
 No database needed; `GHARCHIVE_HOURS` keeps the download to two hourly files
 (about 100 MB each):
@@ -176,9 +216,15 @@ GHARCHIVE_HOURS=15,17 pixi run ./build/gharchive run --partitions 2024-06-12
 pixi run ./build/mojo_repos run --partitions 2024-06-12
 MOJO_HISTORY_MAX_KB=100000 pixi run ./build/mojo_history run --partitions @all
 pixi run ./build/mojo_activity run --partitions 2024-06-12
-pixi run ./build/mojo_stats run --partitions 2024-06-12   # GITHUB_TOKEN helps
+pixi run ./build/mojo_versions run --partitions @all
+pixi run ./build/mojo_stats run --partitions $(date +%F)   # GITHUB_TOKEN helps
 PORT=8080 pixi run ./build/console      # http://127.0.0.1:8080
 ```
+
+mojo_stats takes today's date: its partitions start on 2026-11-01, and a
+date before that is refused. Without a token mojo_repos checks 25 candidates
+a run (1000 with `GITHUB_TOKEN`). The whole sequence takes about 40 seconds
+once the download is under way.
 
 ### The orca way: Postgres, the scheduler and the UI
 
@@ -195,7 +241,8 @@ pixi run createdb -h "$PWD/build" -U postgres orca
 under `build/`, `GHARCHIVE_HOURS=15,17`, `MOJO_HISTORY_MAX_KB=100000` (skips
 modular/modular, which is over a gigabyte) and a 10-second sense interval.
 Register the pipelines **before** loading data (a sensor only counts
-snapshots made after it is registered), then backfill one day:
+snapshots made after it is registered; if you ran the pipelines on their own
+above, delete `build/warehouse` first), then backfill one day:
 
 ```sh
 pixi shell
@@ -235,8 +282,8 @@ Set `GITHUB_TOKEN` to lift the limit. Stop everything with
 On 2024-06-12, hours 15 and 17: 476,227 events (154 MB of Parquet), 23
 candidates, 4 Mojo repositories (NuMojo, Mojonet, mojo-flx and
 modular/modular, which was skipped for size), 3 histories read, 372
-commits and 27 migrations. The end of [GAPS.md](GAPS.md) has the run as the
-scheduler did it, on orca 0.3.1.
+commits and 27 migrations. [docs/first-local-run.md](docs/first-local-run.md)
+has the run as the scheduler did it, on orca 0.3.1.
 
 ## Table history
 

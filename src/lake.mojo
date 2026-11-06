@@ -20,6 +20,7 @@ comptime ACTIVITY = "mojo.activity"
 comptime RELEASES = "mojo.releases"
 comptime ACTIVITY_REPOS = "mojo.activity_repos"
 comptime TAGS = "mojo.tags"
+comptime REPO_VERSIONS = "mojo.repo_versions"
 comptime CANDIDATES = "gharchive.candidates"
 comptime REPO_HOUR = "gharchive.repo_hour"
 comptime GH_RELEASES = "gharchive.releases"
@@ -172,6 +173,24 @@ comptime TAGS_SCHEMA = (
 lightweight one, and the tooling and Mojo version at that commit when it
 is on the first-parent history mojo.commits has."""
 
+comptime REPO_VERSIONS_SCHEMA = (
+    '{"schema-id":0,"type":"struct","fields":['
+    '{"id":1,"name":"repo","required":true,"type":"string"},'
+    '{"id":2,"name":"read_at","required":true,"type":"timestamptz"},'
+    '{"id":3,"name":"head_sha","required":false,"type":"string"},'
+    '{"id":4,"name":"mojo_version","required":false,"type":"string"},'
+    '{"id":5,"name":"version_source","required":false,"type":"string"},'
+    '{"id":6,"name":"version_file","required":false,"type":"string"},'
+    '{"id":7,"name":"version_estimate","required":false,"type":"string"},'
+    '{"id":8,"name":"estimate_source","required":false,"type":"string"},'
+    '{"id":9,"name":"last_mojo_commit","required":false,"type":"timestamptz"}]}'
+)
+"""One row per repository (mojo_versions): the Mojo version its HEAD states
+and where (`lock`, `manifest`, `file`, `ci`, `docker`, `readme`, `repo`), the
+file it was read from, and, apart from it, the release current at the last
+commit that touched a Mojo file (`version_estimate`, source `date`). A
+repository with a manifest still has its row; the console prefers the
+version mojo.commits has and falls back to this one."""
 
 comptime CANDIDATES_SCHEMA = (
     '{"schema-id":0,"type":"struct","fields":['
@@ -343,6 +362,10 @@ def activity_repos_schema() raises -> Schema:
 
 def tags_schema() raises -> Schema:
     return Schema.parse(TAGS_SCHEMA)
+
+
+def repo_versions_schema() raises -> Schema:
+    return Schema.parse(REPO_VERSIONS_SCHEMA)
 
 
 def checked_schema() raises -> Schema:
