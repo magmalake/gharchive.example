@@ -50,6 +50,6 @@ avro-mojo = { git = "https://github.com/magmalake/avro.mojo.git", rev = "d5b26cc
 roaring-mojo = { git = "https://github.com/magmalake/roaring.mojo.git", rev = "a90a7bd30cf1c21403a29059282072e93fbeeee2" }
 hashes-mojo = { git = "https://github.com/magmalake/hashes.mojo.git", rev = "395aca597f9410bd0511df44d972f14b10a8b01d" }
 iceberg-mojo = { git = "https://github.com/magmalake/iceberg.mojo.git", rev = "ab62e59fbf3f54e86f8832c6a545c8831e99e333" }
-orca-mojo = { git = "https://github.com/magmalake/orca.mojo.git", rev = "27bc51a088334d5f624400245c60908593d2e2f6" }
+orca-mojo = { git = "https://github.com/magmalake/orca.mojo.git", rev = "253dbab7b9343aee5bd47edfd1c5315a8d48f1fe" }
 postgresql = ">=18.4,<19"
 git = ">=2.56.0,<3"
