@@ -689,6 +689,15 @@ an hour or needs reading library source), **low** (friction).
   day (or `bucket[N](repo)` partitions) would cut a catch-up from 24 file
   opens per day to one, and iceberg's `in` on a bucketed column would prune
   the files before opening them.
+- **Done (#28):** gharchive's step now merges the day's 24 hourly files into
+  one file sorted by (repo, actor, hour) before the day commit
+  (`daymerge.merge_repo_hour`, one more dista task), with dictionaries, zstd 9
+  and row groups of up to 1M rows: 41% fewer bytes in the audit's test day. A
+  catch-up opens one file a day instead of 24, but its row groups are 64x
+  larger, so pruning a `repo in (...)` scan to a few row groups is gone: the
+  sort keeps the min/max of each row group and page tight, and the page index
+  is still written. If mojo_activity's catch-up gets slower, shrink
+  `write.parquet.row-group-size-rows` in `lake.repo_hour_properties`.
 
 ## 34. `bazel` as tooling, and rewriting histories already read (low)
 

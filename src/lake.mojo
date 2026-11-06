@@ -232,10 +232,23 @@ def gh_releases_schema() raises -> Schema:
 
 def index_properties() -> Dict[String, String]:
     """The tables written beside gharchive.events keep its week of snapshots,
-    and `gharchive.repo_hour` small row groups, so a scan for a few
-    repositories reads a few of each file's row groups."""
-    var p = events_properties()
+    and `gharchive.candidates` and `gharchive.releases` small row groups, so a
+    scan for a few repositories reads a few of each file's row groups."""
+    var p = _week_of_snapshots()
     p["write.parquet.row-group-size-rows"] = "16384"
+    return p^
+
+
+def repo_hour_properties() -> Dict[String, String]:
+    """`gharchive.repo_hour`: a day is one file in (repo, actor, hour) order,
+    and 16,384-row groups only made a dictionary larger than plain. With
+    dictionaries (the default), zstd 9 and row groups of up to 1M rows a day
+    is 41% smaller on 1.9M rows (magmalake/mojo-census#28). A scan for a few
+    repositories still skips by the file's and pages' min/max, which the sort
+    makes tight."""
+    var p = _week_of_snapshots()
+    p["write.parquet.row-group-size-rows"] = "1048576"
+    p["write.parquet.compression-level"] = "9"
     return p^
 
 
@@ -263,13 +276,23 @@ def events_schema() raises -> Schema:
     return Schema.parse(EVENTS_SCHEMA)
 
 
-def events_properties() -> Dict[String, String]:
-    """gharchive.events' table properties beyond orca's defaults: a week of
-    snapshots (168 hourly commits) instead of thirty days, which keeps its
-    `metadata.json`, rewritten on every commit, small. The scheduler's
+def _week_of_snapshots() -> Dict[String, String]:
+    """A week of snapshots (168 hourly commits) instead of thirty days, which
+    keeps `metadata.json`, rewritten on every commit, small. The scheduler's
     expiry also keeps whatever a live run still needs."""
     var p = Dict[String, String]()
     p["history.expire.max-snapshot-age-ms"] = String(7 * 86_400_000)
+    return p^
+
+
+def events_properties() -> Dict[String, String]:
+    """gharchive.events' table properties beyond orca's defaults: a week of
+    snapshots, and zstd 9 rather than the default level: about 13% smaller,
+    for 0.35 s more write time in an hour task of 2.4 s
+    (magmalake/mojo-census#28). Needs iceberg-mojo's
+    `write.parquet.compression-level`; an older one ignores the property."""
+    var p = _week_of_snapshots()
+    p["write.parquet.compression-level"] = "9"
     return p^
 
 
