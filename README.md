@@ -87,6 +87,26 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   mojo_history already read and replaces their rows (used when `tooling`
   learned `bazel`, a root `MODULE.bazel`/`WORKSPACE`/`BUILD.bazel`, which
   outranks pixi: `orca backfill --rerun mojo_retool @all`).
+- **`pipelines/mojo_versions.mojo`**: keyed by repository like mojo_history
+  (50 a run, a sensor on `mojo.repos`), for the repositories whose lock file
+  and manifest name no Mojo version (early projects, installed with `modular
+  install mojo` before magic and pixi: 105 of 211 in 2026-11). Each is
+  cloned without file contents and its HEAD read for a version: lock file,
+  manifest (also `pyproject.toml`, `requirements.txt`), a version file,
+  CI workflows, Dockerfiles and dev containers, README, in that order of
+  precedence (`versions.mojo`: `script_version`, `readme_version`,
+  `pick_version`); `modular/modular` states its own in `Mojo/pixi.lock`.
+  `mojo.repo_versions` has one row each: the version and its source (`lock`,
+  `manifest`, `file`, `ci`, `docker`, `readme`, `repo`) and the file, and
+  apart from them the release current at the last commit that touched a
+  Mojo file (`version_estimate`, source `date`, from the table in
+  `mojo_releases.mojo`). Rows are replaced like mojo_retool's, so
+  `orca backfill --rerun mojo_versions @all` fills the repositories already
+  in the lake and a rerun gives the same rows. The console shows the
+  detected version with its source ("24.4, from CI"), `no-manifest` apart
+  from `unknown`, and the estimate as "~24.3 by date" (the Overview's donuts
+  and `/repos?version=` count it with `?estimate=1`, off by default).
+  `tools/head_versions.mojo` tries the readers on named repositories.
 - **`pipelines/mojo_activity.mojo`**: daily, a sensor on
   `gharchive.repo_hour`, `gharchive.releases` and `mojo.repos`, no API calls
   and no event bytes. For each day, every repository in

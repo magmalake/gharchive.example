@@ -15,17 +15,18 @@ build-console = "mkdir -p build && mojo build -I src bin/console.mojo -o build/c
 build-gharchive = "mkdir -p build && mojo build -I src pipelines/gharchive.mojo -o build/gharchive"
 build-mojo-repos = "mkdir -p build && mojo build -I src pipelines/mojo_repos.mojo -o build/mojo_repos"
 build-mojo-history = "mkdir -p build && mojo build -I src pipelines/mojo_history.mojo -o build/mojo_history"
+build-mojo-versions = "mkdir -p build && mojo build -I src pipelines/mojo_versions.mojo -o build/mojo_versions"
 build-mojo-activity = "mkdir -p build && mojo build -I src pipelines/mojo_activity.mojo -o build/mojo_activity"
 build-mojo-stats = "mkdir -p build && mojo build -I src pipelines/mojo_stats.mojo -o build/mojo_stats"
 build-gharchive-index = "mkdir -p build && mojo build -I src pipelines/gharchive_index.mojo -o build/gharchive_index"
 build-mojo-retool = "mkdir -p build && mojo build -I src pipelines/mojo_retool.mojo -o build/mojo_retool"
-build-pipelines = { depends-on = ["build-gharchive", "build-gharchive-index", "build-mojo-repos", "build-mojo-history", "build-mojo-retool", "build-mojo-activity", "build-mojo-stats"] }
+build-pipelines = { depends-on = ["build-gharchive", "build-gharchive-index", "build-mojo-repos", "build-mojo-history", "build-mojo-retool", "build-mojo-versions", "build-mojo-activity", "build-mojo-stats"] }
 build = { depends-on = ["build-orca", "build-maintain", "build-pipelines", "build-console"] }
 # Needs the network (three hours of GH Archive). `build/gharchive-main` is
 # gharchive built from origin/main: `git archive origin/main | tar -x -C DIR`,
 # then `mojo build -I DIR/src DIR/pipelines/gharchive.mojo -o build/gharchive-main`.
 test-daily = { cmd = "sh scripts/test-daily.sh build/gharchive-main build/gharchive", depends-on = ["build-gharchive"] }
-test = "mojo run -I src tests/test_versions.mojo && mojo run -I src tests/test_history.mojo && mojo run -I src tests/test_datafiles.mojo && mojo run -I src tests/test_jscan.mojo && mojo run -I src tests/test_events.mojo && mojo run -I src tests/test_search.mojo && mojo run -I src tests/test_activity.mojo && mojo run -I src tests/test_hourindex.mojo && mojo run -I src tests/test_stats.mojo && mojo run -I src tests/test_overview.mojo && mojo run -I src tests/test_swap.mojo"
+test = "mojo run -I src tests/test_versions.mojo && mojo run -I src tests/test_history.mojo && mojo run -I src tests/test_datafiles.mojo && mojo run -I src tests/test_jscan.mojo && mojo run -I src tests/test_events.mojo && mojo run -I src tests/test_search.mojo && mojo run -I src tests/test_activity.mojo && mojo run -I src tests/test_hourindex.mojo && mojo run -I src tests/test_stats.mojo && mojo run -I src tests/test_overview.mojo && mojo run -I src tests/test_swap.mojo && mojo run -I src tests/test_headversion.mojo && mojo run -I src tests/test_model.mojo"
 
 [dependencies]
 mojo-compiler = "==1.2.0"

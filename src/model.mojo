@@ -8,7 +8,7 @@ from days import day_text
 from jscan import micros_to_iso
 from lake import exists, load, try_load
 from overview import Builder, tool_code
-from versions import compare_versions
+from versions import compare_versions, usable
 
 
 @fieldwise_init
@@ -39,6 +39,25 @@ struct Library(Copyable, Movable):
     var state: String
     """mojo.repo_stats' `state` (`ok`, `renamed`, `gone`, ...), or ""."""
     var renamed_to: String
+    var version_source: String
+    """Where `mojo_version` was read: the lock file or manifest of the last
+    commit (`pixi.lock`, `pixi.toml`, ...), or mojo.repo_versions' `ci`,
+    `docker`, `readme`, `file`, `repo`; empty for no version."""
+    var version_file: String
+    """The file of mojo.repo_versions it came from, if it did."""
+    var version_estimate: String
+    """The release current at the last commit that touched a Mojo file, by
+    date (mojo.repo_versions); a guess, kept apart from `mojo_version`."""
+
+
+@fieldwise_init
+struct RepoVersion(Copyable, Movable):
+    """A row of mojo.repo_versions."""
+
+    var version: String
+    var source: String
+    var file: String
+    var estimate: String
 
 
 @fieldwise_init
@@ -109,6 +128,7 @@ def libraries(mut ob: Builder) raises -> List[Library]:
                     0, 0, 0, 0, 0, String(), String(),
                     strs_at(b, c_topics, r) if c_topics >= 0 else List[String](),
                     0, 0, 0, False, String(), String(),
+                    String(), String(), String(),
                 )
             )
     _latest_stats(out, index)
@@ -118,7 +138,7 @@ def libraries(mut ob: Builder) raises -> List[Library]:
         for b in (
             commits_table.value()
             .scan()
-            .select(["repo", "committed_at", "seq", "mojo_lines", "mojo_files", "tooling", "mojo_version"])
+            .select(["repo", "committed_at", "seq", "mojo_lines", "mojo_files", "tooling", "mojo_version", "version_source"])
             .to_batches()
         ):
             var c_repo = col(b, "repo")
@@ -128,6 +148,7 @@ def libraries(mut ob: Builder) raises -> List[Library]:
             var c_files = col(b, "mojo_files")
             var c_tool = col(b, "tooling")
             var c_ver = col(b, "mojo_version")
+            var c_src = col(b, "version_source")
             for r in range(b.num_rows):
                 var repo = str_at(b.column(c_repo), r)
                 if repo not in index:
@@ -149,12 +170,54 @@ def libraries(mut ob: Builder) raises -> List[Library]:
                     lib.mojo_files = i64_at(b.column(c_files), r)
                     lib.tooling = str_at(b.column(c_tool), r)
                     lib.mojo_version = str_at(b.column(c_ver), r)
+                    lib.version_source = str_at(b.column(c_src), r)
+    # Versions the history couldn't read (no manifest), from the files at HEAD,
+    # and the estimate by date.
+    var heads = repo_versions()
+    for i in range(len(out)):
+        ref lib = out[i]
+        if lib.repo in heads:
+            ref rv = heads[lib.repo]
+            if not usable(lib.mojo_version) and usable(rv.version):
+                lib.mojo_version = rv.version
+                lib.version_source = rv.source
+                lib.version_file = rv.file
+            lib.version_estimate = rv.estimate
+        ob.set_version(ids[i], lib.mojo_version, lib.version_estimate)
     # Biggest first.
     for i in range(1, len(out)):
         var j = i
         while j > 0 and out[j - 1].mojo_lines < out[j].mojo_lines:
             out.swap_elements(j - 1, j)
             j -= 1
+    return out^
+
+
+def repo_versions() raises -> Dict[String, RepoVersion]:
+    """Each repository's row of mojo.repo_versions (the newest if there are
+    several); empty if the table doesn't exist."""
+    var out = Dict[String, RepoVersion]()
+    var read = Dict[String, Int64]()
+    var t = try_load("mojo", "repo_versions")
+    if not t:
+        return out^
+    for b in t.value().scan().to_batches():
+        var c_repo = col(b, "repo")
+        var c_at = col(b, "read_at")
+        var c_ver = col(b, "mojo_version")
+        var c_src = col(b, "version_source")
+        var c_file = col(b, "version_file")
+        var c_est = col(b, "version_estimate")
+        for r in range(b.num_rows):
+            var repo = str_at(b.column(c_repo), r)
+            var at = i64_at(b.column(c_at), r)
+            if repo in read and read[repo] >= at:
+                continue
+            read[repo] = at
+            out[repo] = RepoVersion(
+                str_at(b.column(c_ver), r), str_at(b.column(c_src), r),
+                str_at(b.column(c_file), r), str_at(b.column(c_est), r),
+            )
     return out^
 
 
