@@ -123,6 +123,8 @@ def bucket_rank(b: String) -> Int:
         return 0
     if b == "other":
         return 1_000_000_000
+    if b == "no-manifest":
+        return 1_500_000_000
     if b == "unknown":
         return 2_000_000_000
     var dot = b.find(".")

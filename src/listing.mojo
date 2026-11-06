@@ -14,13 +14,16 @@ struct ListQuery(Copyable, Movable):
     """`lines`, `files`, `stars` or `commits30` (commits in 30 days)."""
     var asc: Bool
     var version: String
-    """A version bucket (`pre-1.0`, `1.2`, `unknown`, `other`) or an old
+    """A version bucket (`pre-1.0`, `1.2`, `no-manifest`, `unknown`, `other`) or an old
     family (`1.x`, `0.26.x`); empty for any."""
     var active: Bool
     """Only repositories with a commit in the last 12 months."""
     var new: String
     """When the first Mojo commit was: `month` (this UTC month),
     `last-month` or `30d`; empty for any."""
+    var estimate: Bool
+    """Count a repo with no detected version under the release its date
+    estimates (`?estimate=1`); only the version filter looks at it."""
 
     def is_default_order(self) -> Bool:
         return self.sort == "lines" and not self.asc
@@ -30,7 +33,12 @@ struct ListQuery(Copyable, Movable):
 
 
 def parse_list_query(
-    sort: String, dir: String, version: String, active: String, new: String = String()
+    sort: String,
+    dir: String,
+    version: String,
+    active: String,
+    new: String = String(),
+    estimate: String = String(),
 ) -> ListQuery:
     """The query from the raw parameters; what isn't recognised is the
     default."""
@@ -40,7 +48,7 @@ def parse_list_query(
     var n = String()
     if new == "month" or new == "last-month" or new == "30d":
         n = new
-    return ListQuery(s, dir == "asc", String(version.strip()), active == "1y", n)
+    return ListQuery(s, dir == "asc", String(version.strip()), active == "1y", n, estimate == "1")
 
 
 def list_url(q: ListQuery, base: String = "/repos") -> String:
@@ -56,6 +64,8 @@ def list_url(q: ListQuery, base: String = "/repos") -> String:
         parts.append(String("active=1y"))
     if q.new.byte_length() > 0:
         parts.append(String("new=", q.new))
+    if q.estimate:
+        parts.append(String("estimate=1"))
     if len(parts) == 0:
         return base
     var out = String(base, "?")
@@ -70,20 +80,24 @@ def sorted_by(q: ListQuery, column: String) -> ListQuery:
     """`q` after clicking `column`'s header: the same column flips the
     direction, another starts largest first."""
     if q.sort == column:
-        return ListQuery(q.sort, not q.asc, q.version, q.active, q.new)
-    return ListQuery(column, False, q.version, q.active, q.new)
+        return ListQuery(q.sort, not q.asc, q.version, q.active, q.new, q.estimate)
+    return ListQuery(column, False, q.version, q.active, q.new, q.estimate)
 
 
 def with_version(q: ListQuery, version: String) -> ListQuery:
-    return ListQuery(q.sort, q.asc, version, q.active, q.new)
+    return ListQuery(q.sort, q.asc, version, q.active, q.new, q.estimate)
+
+
+def with_estimate(q: ListQuery, estimate: Bool) -> ListQuery:
+    return ListQuery(q.sort, q.asc, q.version, q.active, q.new, estimate)
 
 
 def with_active(q: ListQuery, active: Bool) -> ListQuery:
-    return ListQuery(q.sort, q.asc, q.version, active, q.new)
+    return ListQuery(q.sort, q.asc, q.version, active, q.new, q.estimate)
 
 
 def with_new(q: ListQuery, new: String) -> ListQuery:
-    return ListQuery(q.sort, q.asc, q.version, q.active, new)
+    return ListQuery(q.sort, q.asc, q.version, q.active, new, q.estimate)
 
 
 comptime NEW_MONTH = 1

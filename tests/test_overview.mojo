@@ -89,23 +89,58 @@ def test_totals() raises:
 
 def test_buckets() raises:
     var ov = _small().finish(4)
-    # a is on 1.1, b on 0.26.x (pre-1.0), d and c have no version.
-    var want: List[String] = ["pre-1.0", "1.1", "unknown"]
-    assert_equal(len(ov.buckets), 3)
-    for i in range(3):
+    # a is on 1.1, b on 0.26.x (pre-1.0); d was read and has no manifest, c
+    # has no history yet: no-manifest and unknown are different buckets.
+    var want: List[String] = ["pre-1.0", "1.1", "no-manifest", "unknown"]
+    assert_equal(len(ov.buckets), 4)
+    for i in range(4):
         assert_equal(ov.buckets[i], want[i])
-    assert_equal(ov.bucket_repos[0], 1)
-    assert_equal(ov.bucket_repos[1], 1)
-    assert_equal(ov.bucket_repos[2], 2)
+    for i in range(4):
+        assert_equal(ov.bucket_repos[i], 1)
     # Active: a and b; d's commit is from 2023.
     assert_equal(ov.bucket_active[0], 1)
     assert_equal(ov.bucket_active[1], 1)
     assert_equal(ov.bucket_active[2], 0)
+    assert_equal(ov.bucket_active[3], 0)
     # The old families are still counted.
-    var fams: List[String] = ["0.26.x", "1.x", "unknown"]
-    for i in range(3):
+    var fams: List[String] = ["0.26.x", "1.x", "no-manifest", "unknown"]
+    for i in range(4):
         assert_equal(ov.families[i], fams[i])
     assert_equal(ov.family_repos[1], 1)
+
+
+def test_unknown_with_a_manifest() raises:
+    # A pixi repo whose manifest names no Mojo version is unknown, not
+    # "no manifest".
+    var b = Builder(days_from_civil(2026, 11, 15))
+    var p = b.add_repo("o/p")
+    b.add_commit(p, _us(2026, 10, 1), 0, 10, 2, "")
+    var ov = b.finish(1)
+    assert_equal(len(ov.buckets), 1)
+    assert_equal(ov.buckets[0], "unknown")
+
+
+def test_estimate_buckets() raises:
+    var b = _small()
+    # d (no manifest, 2023) gets an estimate; b's detected version stays.
+    b.set_version(3, "", "0.4")
+    b.set_version(1, "0.26.1", "0.26.2")
+    var ov = b.finish(4)
+    # Detected only: as before.
+    assert_equal(len(ov.buckets), 4)
+    assert_equal(ov.buckets[2], "no-manifest")
+    # With the estimate d is pre-1.0 beside b; c has nothing to estimate.
+    var want: List[String] = ["pre-1.0", "1.1", "unknown"]
+    assert_equal(len(ov.est_buckets), 3)
+    for i in range(3):
+        assert_equal(ov.est_buckets[i], want[i])
+    assert_equal(ov.est_bucket_repos[0], 2)
+    assert_equal(ov.est_bucket_repos[1], 1)
+    assert_equal(ov.est_bucket_repos[2], 1)
+    var total = 0
+    for n in ov.est_bucket_repos:
+        total += n
+    assert_equal(total, 4)
 
 
 def test_bucket_colors() raises:
@@ -117,6 +152,7 @@ def test_bucket_colors() raises:
     assert_equal(bucket_color("1.8"), "var(--c1)")
     assert_equal(bucket_color("other"), "var(--c5)")
     assert_true(bucket_color("unknown") != bucket_color("other"))
+    assert_true(bucket_color("no-manifest") != bucket_color("unknown"))
     # Distinct minors get distinct colours until the palette wraps.
     for i in range(7):
         assert_true(bucket_color(String("1.", i)) != bucket_color(String("1.", i + 1)))
@@ -147,6 +183,27 @@ def test_listing_query() raises:
     assert_equal(list_url(sorted_by(d, "stars")), "/repos?sort=stars")
     assert_equal(list_url(sorted_by(sorted_by(d, "stars"), "stars")), "/repos?sort=stars&dir=asc")
     assert_equal(list_url(with_version(q, "")), "/repos?sort=stars&dir=asc&active=1y")
+
+
+def test_listing_buckets_and_estimate() raises:
+    # `?version=` takes the new buckets; `estimate=1` is carried by the URL.
+    var lines: List[Int64] = [900, 500, 100, 50]
+    var files: List[Int64] = [1, 1, 1, 1]
+    var stars: List[Int64] = [0, 0, 0, 0]
+    var buckets: List[String] = ["1.1", "no-manifest", "no-manifest", "unknown"]
+    var active: List[Bool] = [True, True, False, False]
+    var nm = select_repos(parse_list_query("", "", "no-manifest", ""), lines, files, stars, buckets, active)
+    assert_equal(len(nm), 2)
+    var un = select_repos(parse_list_query("", "", "unknown", ""), lines, files, stars, buckets, active)
+    assert_equal(len(un), 1)
+    assert_equal(un[0], 3)
+    var q = parse_list_query("", "", "pre-1.0", "", "", "1")
+    assert_true(q.estimate)
+    assert_equal(list_url(q), "/repos?version=pre-1.0&estimate=1")
+    assert_equal(list_url(with_version(q, "")), "/repos?estimate=1")
+    assert_equal(list_url(sorted_by(q, "stars")), "/repos?sort=stars&version=pre-1.0&estimate=1")
+    assert_true(not parse_list_query("", "", "", "", "", "").estimate)
+    assert_true(not parse_list_query("", "", "", "", "", "yes").estimate)
 
 
 def test_select_new_and_commits30() raises:

@@ -58,6 +58,7 @@ from listing import (
     select_repos,
     sorted_by,
     with_active,
+    with_estimate,
     with_new,
     with_version,
 )
@@ -82,10 +83,10 @@ from model import (
     versions_of,
 )
 from days import day_text
-from overview import ACTIVE_DAYS, Builder, Overview, bucket_color, bucket_of, family_of, month_of_days, top_gains
+from overview import ACTIVE_DAYS, Builder, Overview, bucket_color, bucket_of, family_of, month_of_days, tool_code, top_gains, unversioned
 from swap import Swap, check_due, needs_build
 from search import search_score, sort_buckets, url_decode, version_bucket, version_family
-from versions import sort_versions
+from versions import sort_versions, source_label, usable
 
 comptime STYLE = """
 .prose{max-width:72ch}.prose p,.prose li{line-height:1.6}.prose ul{padding-left:1.2em}.prose li{margin:6px 0}
@@ -380,6 +381,9 @@ struct Cache(Movable):
     """`bucket_of` each repo's current Mojo version."""
     var families: List[String]
     """`family_of` each repo's current Mojo version (old `?version=` links)."""
+    var est_buckets: List[String]
+    """`buckets` with the estimate by date for a repo with no detected version."""
+    var est_families: List[String]
     var news: List[Int]
     """Bits of `listing.new_bit` for when each repo's first Mojo commit was."""
     var active: List[Bool]
@@ -414,6 +418,8 @@ struct Cache(Movable):
         self.stars = List[Int64]()
         self.buckets = List[String]()
         self.families = List[String]()
+        self.est_buckets = List[String]()
+        self.est_families = List[String]()
         self.news = List[Int]()
         self.active = List[Bool]()
         self.ov = Overview()
@@ -448,6 +454,8 @@ struct Cache(Movable):
         var stars = List[Int64]()
         var buckets = List[String]()
         var families = List[String]()
+        var est_buckets = List[String]()
+        var est_families = List[String]()
         var news = List[Int]()
         var now_month = month_of_days(today)
         var cut30 = Int64(today - 30) * 86_400_000_000
@@ -457,8 +465,12 @@ struct Cache(Movable):
             lines.append(l.mojo_lines)
             files.append(l.mojo_files)
             stars.append(l.stars)
-            buckets.append(bucket_of(l.mojo_version))
-            families.append(family_of(l.mojo_version))
+            var why = unversioned(l.commits, tool_code(l.tooling))
+            buckets.append(bucket_of(l.mojo_version, why))
+            families.append(family_of(l.mojo_version, why))
+            var ev = l.mojo_version if l.mojo_version.byte_length() > 0 else l.version_estimate
+            est_buckets.append(bucket_of(ev, why))
+            est_families.append(family_of(ev, why))
             # As the Overview counts new repos: by the first Mojo commit.
             var bits = 0
             if l.commits > 0:
@@ -515,6 +527,8 @@ struct Cache(Movable):
         self.stars = stars^
         self.buckets = buckets^
         self.families = families^
+        self.est_buckets = est_buckets^
+        self.est_families = est_families^
         self.news = news^
         self.active = active^
         self.libs = libs^
@@ -572,18 +586,30 @@ def _libs_table(
             _n(l.mojo_files), "</td><td class=num>", l.commits, "</td>",
             String("<td class=num>", c30[i], "</td>") if len(c30) > 0 else String(), "<td>",
             _age(l.created_at, today), "</td><td>", day(l.created_at),
-            "</td><td class='mono soft'>", _or_dash(l.mojo_version), "</td><td>",
+            "</td><td class='mono soft'>", _version_cell(l), "</td><td>",
             _or_dash(l.tooling), "</td><td class=num>", _n(l.stars), "</td></tr>",
         )
     h.write("</tbody></table></div>")
     return h^
 
 
+def _version_cell(l: Library) -> String:
+    """The detected version, or, muted, the estimate by date with a `~`."""
+    if l.mojo_version.byte_length() > 0:
+        return html_escape(l.mojo_version)
+    if l.version_estimate.byte_length() > 0:
+        return String(
+            "<span class=mute title='estimated by date: the Mojo release current at its last Mojo commit'>~",
+            html_escape(l.version_estimate), "</span>",
+        )
+    return _or_dash(String())
+
+
 def _list_query(req: Request) -> ListQuery:
     return parse_list_query(
         req.query_param("sort"), req.query_param("dir"),
         url_decode(req.query_param("version")), req.query_param("active"),
-        req.query_param("new"),
+        req.query_param("new"), req.query_param("estimate"),
     )
 
 
@@ -610,14 +636,15 @@ def _filter_options(q: ListQuery, c: Cache) -> String:
             continue
         if q.new.byte_length() > 0 and c.news[i] & new_bit(q.new) == 0:
             continue
-        per[c.buckets[i]] = per.get(c.buckets[i], 0) + 1
+        var bucket = c.est_buckets[i] if q.estimate else c.buckets[i]
+        per[bucket] = per.get(bucket, 0) + 1
         total += 1
     var h = String("<div class=filters><span class=label>Mojo version</span>")
     h.write(
         "<a class='chip", " on" if q.version.byte_length() == 0 else "", "' href='",
         html_escape(list_url(with_version(q, String()))), "'>any (", total, ")</a>",
     )
-    for ref f in c.ov.buckets:
+    for ref f in (c.ov.est_buckets if q.estimate else c.ov.buckets):
         var n = per.get(f, 0)
         if n == 0 and q.version != f:
             continue
@@ -625,6 +652,15 @@ def _filter_options(q: ListQuery, c: Cache) -> String:
             "<a class='chip", " on" if q.version == f else "", "' href='",
             html_escape(list_url(with_version(q, f))), "'>", html_escape(f), " (", n, ")</a>",
         )
+    h.write(
+        "<span class=label>Versions</span>",
+        "<a class='chip", " on" if not q.estimate else "", "' href='",
+        html_escape(list_url(with_estimate(q, False))), "'>detected</a>",
+        "<a class='chip", " on" if q.estimate else "", "' href='",
+        html_escape(list_url(with_estimate(q, True))),
+        "' title='A repo with no detected version counts under the Mojo release current at its last Mojo commit'>",
+        "detected + estimated by date</a>",
+    )
     h.write("<span class=label>Activity</span>")
     h.write(
         "<a class='chip", " on" if not q.active else "", "' href='",
@@ -653,7 +689,7 @@ def _filter_chips(q: ListQuery) -> String:
         h.write(
             "<a class='chip on' href='", html_escape(list_url(with_version(q, String()))),
             "' aria-label='Remove the version filter'>version ",
-            html_escape(q.version), " &times;</a>",
+            html_escape(q.version), " (estimated by date too)" if q.estimate else "", " &times;</a>",
         )
     if q.active:
         h.write(
@@ -677,7 +713,11 @@ def _filter_chips(q: ListQuery) -> String:
 def repos_page(req: Request, c: Cache) raises -> Response:
     try:
         var q = _list_query(req)
-        var idx = select_repos(q, c.lines, c.files, c.stars, c.buckets, c.active, c.families, c.news, c.commits30)
+        var idx = select_repos(
+            q, c.lines, c.files, c.stars,
+            c.est_buckets if q.estimate else c.buckets, c.active,
+            c.est_families if q.estimate else c.families, c.news, c.commits30,
+        )
         var h = String(
             "<h1>Mojo repos</h1><p class=sub>Mojo repos, versions and growth, counted",
             " from GH Archive by magmalake. Not affiliated with Modular.</p>",
@@ -735,11 +775,11 @@ def _pct(part: Int, whole: Int) -> String:
     return String(tenths // 10, ".", tenths % 10, "%")
 
 
-def _family_url(f: String, active: Bool) -> String:
-    return list_url(ListQuery(String("lines"), False, f, active, String()))
+def _family_url(f: String, active: Bool, estimate: Bool = False) -> String:
+    return list_url(ListQuery(String("lines"), False, f, active, String(), estimate))
 
 
-def _family_donut(c: Cache, active: Bool) -> String:
+def _family_donut(c: Cache, active: Bool, estimate: Bool = False) -> String:
     """A donut of the repos per Mojo version family (the ones active in the
     last year when `active`), each slice a link to the filtered Repos table,
     and a legend with the numbers."""
@@ -749,13 +789,20 @@ def _family_donut(c: Cache, active: Bool) -> String:
     var colors = List[String]()
     var hrefs = List[String]()
     var total = 0
-    for i in range(len(ov.buckets)):
-        var n = ov.bucket_active[i] if active else ov.bucket_repos[i]
+    var names = ov.est_buckets.copy() if estimate else ov.buckets.copy()
+    var counts = List[Int]()
+    for n in range(len(names)):
+        if estimate:
+            counts.append(ov.est_bucket_active[n] if active else ov.est_bucket_repos[n])
+        else:
+            counts.append(ov.bucket_active[n] if active else ov.bucket_repos[n])
+    for i in range(len(names)):
+        var n = counts[i]
         total += n
-        labels.append(ov.buckets[i])
+        labels.append(names[i])
         values.append(n)
-        colors.append(bucket_color(ov.buckets[i]))
-        hrefs.append(_family_url(ov.buckets[i], active))
+        colors.append(bucket_color(names[i]))
+        hrefs.append(_family_url(names[i], active, estimate))
     var what = String("active in the last year") if active else String("all")
     var svg = donut(
         labels, values, colors, hrefs, String(total), String("repos"),
@@ -839,6 +886,7 @@ def overview(req: Request, c: Cache) raises -> Response:
         return redirect(String("/repos?", _raw_query(req)), 301)
     try:
         ref ov = c.ov
+        var estimate = req.query_param("estimate") == "1"
         var h = String(
             "<h1>Mojo census</h1><p class=lead>How the Mojo language is being used on GitHub:",
             " the repos that contain Mojo, found in GH Archive, with their whole git history",
@@ -859,7 +907,7 @@ def overview(req: Request, c: Cache) raises -> Response:
             _kpi(
                 "Repos", String("<a href='/repos'>", _n(Int64(ov.repos)), "</a>"),
                 String(
-                    "<a href='", html_escape(list_url(with_new(ListQuery(String("lines"), False, String(), False, String()), String("30d")))), "'>",
+                    "<a href='", html_escape(list_url(with_new(ListQuery(String("lines"), False, String(), False, String(), False), String("30d")))), "'>",
                     _signed(Int64(ov.with_history - ov.repos_30_ago)), " in 30 days</a>",
                 ),
             ),
@@ -870,7 +918,7 @@ def overview(req: Request, c: Cache) raises -> Response:
             _kpi(
                 "Lines of Mojo", compact(ov.lines),
                 String(_signed(ov.lines - ov.lines_30_ago), " in 30 days"),
-                list_url(ListQuery(String("lines"), False, String(), False, String())),
+                list_url(ListQuery(String("lines"), False, String(), False, String(), False)),
             ),
             _kpi(
                 "Active repos", _n(Int64(ov.active)),
@@ -893,9 +941,16 @@ def overview(req: Request, c: Cache) raises -> Response:
         )
         # Repos per Mojo version family.
         h.write(
-            "<h2>Repos by Mojo version</h2><p class=sub>The version a repo's latest lock file (or manifest)",
-            " names; <em>unknown</em> when it has none. Click a slice for its repos.</p>",
-            "<div class=cols>", _family_donut(c, False), _family_donut(c, True), "</div>",
+            "<h2>Repos by Mojo version</h2><p class=sub>The version a repo states: its latest lock file or",
+            " manifest, else its CI, Docker or README files. <em>no-manifest</em> is a repo with nothing",
+            " there to read (mostly early projects from before magic and pixi); <em>unknown</em> has a",
+            " manifest that names no Mojo version, or isn't read yet. Click a slice for its repos.</p>",
+            "<p class=sub>Counting <strong>", "detected and estimated versions" if estimate else "detected versions only",
+            "</strong>. <a href='", "/" if estimate else "/?estimate=1", "'>",
+            "Show detected only" if estimate else "Add an estimate by date for repos with no version",
+            "</a>", String(" (the Mojo release current at the repo's last Mojo commit; a guess, not a detection)") if not estimate else String(),
+            ".</p>",
+            "<div class=cols>", _family_donut(c, False, estimate), _family_donut(c, True, estimate), "</div>",
         )
         # Growth.
         if len(ov.months) >= 2:
@@ -972,7 +1027,7 @@ def overview(req: Request, c: Cache) raises -> Response:
             h.write("</tbody></table></div>")
         h.write(
             "</div><div><h2><a href='",
-            html_escape(list_url(ListQuery(String("commits30"), False, String(), False, String()))),
+            html_escape(list_url(ListQuery(String("commits30"), False, String(), False, String(), False))),
             "'>Most active</a></h2><p class=sub>The repos with the most commits in the last 30 days,",
             " and how many lines of Mojo they grew by.</p>",
         )
@@ -1026,6 +1081,14 @@ def overview_json(req: Request, c: Cache) raises -> Response:
         out.write(
             '{"bucket":', _q(ov.buckets[i]), ',"repos":', ov.bucket_repos[i],
             ',"active_repos":', ov.bucket_active[i], "}",
+        )
+    out += '],"estimated_buckets":['
+    for i in range(len(ov.est_buckets)):
+        if i > 0:
+            out += ","
+        out.write(
+            '{"bucket":', _q(ov.est_buckets[i]), ',"repos":', ov.est_bucket_repos[i],
+            ',"active_repos":', ov.est_bucket_active[i], "}",
         )
     out += '],"families":['
     for i in range(len(ov.families)):
@@ -1142,6 +1205,16 @@ def _strs_json(items: List[String]) -> String:
     return out^
 
 
+def _source_name(source: String) -> String:
+    """The source as the JSON names it: `lock`, `manifest`, `ci`, `docker`,
+    `readme`, `file`, `repo`; mojo.commits keeps the file's name."""
+    if source.endswith(".lock"):
+        return String("lock")
+    if source.endswith(".toml"):
+        return String("manifest")
+    return source
+
+
 def _lib_json(l: Library) -> String:
     return String(
         '{"repo":', _q(l.repo), ',"description":', _q(l.description),
@@ -1152,6 +1225,9 @@ def _lib_json(l: Library) -> String:
         ',"size_kb":', l.size_kb, ',"commits":', l.commits,
         ',"mojo_lines":', l.mojo_lines, ',"mojo_files":', l.mojo_files,
         ',"tooling":', _q(l.tooling), ',"mojo_version":', _q(l.mojo_version),
+        ',"version_source":', _q(_source_name(l.version_source)), ',"version_file":', _q(l.version_file),
+        ',"version_estimate":', _q(l.version_estimate),
+        ',"version_estimate_source":', _q("date" if l.version_estimate.byte_length() > 0 else ""),
         ',"topics":', _strs_json(l.topics),
         ',"stats_as_of":', _q(day_text(l.stats_as_of) if l.stats_as_of > 0 else ""),
         ',"open_issues":', l.open_issues, ',"watchers":', l.watchers,
@@ -1452,6 +1528,31 @@ def _stat(label: String, value: String, note: String = "") -> String:
     )
 
 
+def _version_stat(l: Library) -> String:
+    """The Mojo version tile: the detected version and where it was read
+    (`24.4`, from CI), else why there is none, and the estimate by date, kept
+    apart from it."""
+    var est = String()
+    if l.version_estimate.byte_length() > 0:
+        est = String("~", html_escape(l.version_estimate), " by date")
+    if usable(l.mojo_version):
+        var note = String("from ", html_escape(source_label(l.version_source)))
+        if l.version_file.byte_length() > 0:
+            note += String(": ", html_escape(l.version_file))
+        return _stat("Mojo version", html_escape(l.mojo_version), note)
+    var why = unversioned(l.commits, tool_code(l.tooling))
+    var note = String("no manifest or lock file; nothing states a version") if why == "no-manifest" else String(
+        "unknown: its manifest names no Mojo version" if l.commits > 0 else "unknown: history not read yet"
+    )
+    if est.byte_length() > 0:
+        return _stat(
+            "Mojo version",
+            String("<span class=mute>", html_escape(why.replace("-", " ")), "</span>"),
+            String(note, "; <span title='the Mojo release current at the last Mojo commit; a guess'>", est, "</span>"),
+        )
+    return _stat("Mojo version", _or_dash(String()), note)
+
+
 def repo_page(req: Request, c: Cache) raises -> Response:
     try:
         var repo = String(req.param("owner"), "/", req.param("name"))
@@ -1486,7 +1587,7 @@ def repo_page(req: Request, c: Cache) raises -> Response:
             _stat("Created", day(l.created_at), String(_age(l.created_at, today), " ago") if l.created_at else String()),
             _stat("Lines of Mojo", _n(l.mojo_lines), String(_n(l.mojo_files), " files")),
             _stat("Commits", _n(Int64(l.commits)), String(day(l.first_commit), " to ", day(l.last_commit)) if l.commits > 0 else String()),
-            _stat("Mojo version", _or_dash(l.mojo_version)),
+            _version_stat(l),
             _stat("Tooling", _or_dash(l.tooling)),
             _stat("License", _or_dash(l.license)),
             "</div></div>",
