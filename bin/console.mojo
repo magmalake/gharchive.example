@@ -86,6 +86,7 @@ from model import (
     versions_of,
 )
 from days import day_text
+from howimage import HETZNER_SERVER_WEBP
 from overview import (
     ACTIVE_DAYS,
     RISING_FORK_WEIGHT,
@@ -220,6 +221,13 @@ th[aria-sort] a{color:var(--text)}
 .pop::before{content:"";position:absolute;left:0;right:0;top:-9px;height:9px}
 .pop[hidden]{display:none}
 .pop a{color:var(--lake)}
+.diagram{margin:20px 0 8px;overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+.diagram pre{margin:0;font:12px/1.5 var(--mono);color:var(--muted);white-space:pre}
+.diagram svg{display:block;margin:0 auto;max-width:none;height:auto}
+.diagram .node.pipe rect{fill:var(--ember-wash)!important;stroke:var(--ember)!important}
+.diagram .node.ice path{fill:var(--surface-2)!important;stroke:var(--lake)!important}
+.diagram .node.ext rect{fill:var(--bg-alt)!important}
+.shot{margin:16px 0}.shot img{display:block;width:100%;height:auto;border-radius:var(--radius-sm);border:1px solid var(--border)}.shot figcaption{color:var(--muted);font-size:13px;margin-top:6px}
 @media (max-width:640px){.kpi span{font-size:22px}.top .wrap{gap:12px;flex-wrap:wrap;height:auto;padding-block:8px}.search{order:3;flex-basis:100%;max-width:none}.top nav{gap:12px}.top nav .sep,.top nav .arrow{display:none}.brand{font-size:15px}h1{font-size:24px}th,td{padding:9px 10px}main{padding-top:24px}footer nav{margin-left:0}}
 """
 
@@ -1982,49 +1990,196 @@ comptime ORCA_DOCS = "https://mlake.dev/s/orca/docs"
 comptime ORCA_UI = "https://orca.mojourney.dev"
 comptime GH = "https://github.com/magmalake"
 
-comptime HOW = (
-    "<div class=prose><p class=lead>The census is five"
-    " pipelines and this page, all Mojo. The pipelines run on <a href='"
+comptime HOW_LEAD = (
+    "<div class=prose><p class=lead>Mojourney, the Mojo ecosystem census, is a"
+    " handful of pipelines and this site, all Mojo. The pipelines run on <a href='"
     + ORCA_DOCS
-    + "' rel=noopener>orca</a>, magmalake's pipeline orchestrator, on AWS; they"
-    " write Iceberg tables to S3, and this site reads them.</p>"
-    "<ul><li><a href='"
+    + "' rel=noopener>orca</a>, magmalake's pipeline orchestrator, and write"
+    " Apache Iceberg tables to Hetzner Object Storage (S3-compatible) with <a"
+    " href='"
+    + GH
+    + "/iceberg.mojo' rel=noopener>iceberg.mojo</a> and <a href='"
+    + GH
+    + "/parquet.mojo' rel=noopener>parquet.mojo</a>; this site reads the"
+    " tables.</p></div>"
+)
+
+comptime DIAGRAM = """flowchart LR
+  subgraph sources [Sources]
+    gha([GH Archive])
+    api([GitHub API])
+    git([git clones])
+  end
+  subgraph orca [orca]
+    direction TB
+    sched[scheduler and UI]
+    pg[(Postgres: run state)]
+    sched --- pg
+  end
+  gharchive[gharchive]
+  index[gharchive_index, one-off]
+  events[(gharchive.events)]
+  candidates[(gharchive.candidates)]
+  repo_hour[(gharchive.repo_hour)]
+  gh_releases[(gharchive.releases)]
+  mojo_repos[mojo_repos]
+  repos[(mojo.repos)]
+  checked[(mojo.checked)]
+  mojo_history[mojo_history]
+  mojo_versions[mojo_versions]
+  mojo_activity[mojo_activity]
+  mojo_stats[mojo_stats]
+  subgraph out [mojo.* tables]
+    commits[(mojo.commits)]
+    migrations[(mojo.migrations)]
+    tags[(mojo.tags)]
+    repo_versions[(mojo.repo_versions)]
+    repo_deps[(mojo.repo_deps)]
+    activity[(mojo.activity)]
+    releases[(mojo.releases)]
+    repo_stats[(mojo.repo_stats)]
+  end
+  site([mojourney.dev])
+  gha --> gharchive
+  gharchive --> events & candidates & repo_hour & gh_releases
+  index -.-> candidates & repo_hour & gh_releases
+  candidates --> mojo_repos
+  api --> mojo_repos
+  mojo_repos --> repos & checked
+  repos --> mojo_history & mojo_versions & mojo_activity & mojo_stats
+  git --> mojo_history & mojo_versions
+  mojo_history --> commits & migrations & tags
+  mojo_versions --> repo_versions & repo_deps
+  repo_hour & gh_releases --> mojo_activity
+  mojo_activity --> activity & releases
+  api --> mojo_stats
+  mojo_stats --> repo_stats
+  sched -. runs every pipeline .-> gharchive
+  out -- read by --> site
+  class gharchive,index,mojo_repos,mojo_history,mojo_versions,mojo_activity,mojo_stats pipe
+  class events,candidates,repo_hour,gh_releases,repos,checked,commits,migrations,tags,repo_versions,repo_deps,activity,releases,repo_stats ice
+  class gha,api,git,site ext
+"""
+"""The pipelines and the tables between them, as Mermaid. The page has it in
+a `<pre class=mermaid>` (escaped), which `MERMAID_JS` draws; without
+JavaScript it reads as text."""
+
+comptime MERMAID_JS = (
+    "<script type=module>"
+    "import mermaid from"
+    " 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';"
+    "const css=getComputedStyle(document.documentElement),v=(n)=>css.getPropertyValue(n).trim();"
+    "const dark=matchMedia('(prefers-color-scheme: dark)').matches;"
+    "mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'base',"
+    "darkMode:dark,fontFamily:'ui-sans-serif,system-ui,sans-serif',"
+    "flowchart:{useMaxWidth:false,htmlLabels:true,curve:'basis',"
+    "nodeSpacing:24,rankSpacing:36},"
+    "themeVariables:{background:v('--surface'),primaryColor:v('--surface'),"
+    "primaryTextColor:v('--text'),primaryBorderColor:v('--border-strong'),"
+    "lineColor:v('--faint'),textColor:v('--muted'),clusterBkg:v('--surface-2'),"
+    "clusterBorder:v('--border'),edgeLabelBackground:v('--surface'),"
+    "fontSize:'13px'}});"
+    "await mermaid.run({querySelector:'pre.mermaid'});"
+    "</script>"
+)
+
+comptime HOW_PIPELINES = (
+    "<div class=prose>"
+    "<p class='mute note'>Rounded boxes are the sources and this site,"
+    " rectangles the pipelines, cylinders the Iceberg tables; dotted arrows are"
+    " orca's scheduling and the one-off gharchive_index. On a narrow screen,"
+    " scroll it sideways.</p>"
+    "<h2>The pipelines</h2><ul><li><a href='"
     + ORCA_UI
-    + "/pipelines/gharchive' rel=noopener>gharchive</a> loads each day of"
-    " <a href='https://www.gharchive.org' rel=noopener>GH Archive</a>, every"
-    " public GitHub event, into <code>gharchive.events</code> at 03:00 UTC for"
-    " the day before. Each hour is a <a href='https://mlake.dev/s/dista/docs'"
-    " rel=noopener>dista</a> task on a worker instance, which downloads, gunzips,"
-    " parses and writes its Parquet files; the step commits the hours in order.</li>"
+    + "/pipelines/gharchive' rel=noopener>gharchive</a> loads <a"
+    " href='https://www.gharchive.org' rel=noopener>GH Archive</a>, every public"
+    " GitHub event an hour at a time, into <code>gharchive.events</code>, daily at"
+    " 03:00 UTC for the day before. Each hour is a <a"
+    " href='https://mlake.dev/s/dista/docs' rel=noopener>dista</a> task that"
+    " downloads, gunzips, parses and writes its Parquet files as the hour streams"
+    " in, and builds the hour's rows of <code>gharchive.candidates</code> (events"
+    " that hint at Mojo), <code>gharchive.repo_hour</code> (event counts per"
+    " repository, person and hour) and <code>gharchive.releases</code>; the step"
+    " commits the hours in order. It is filling every day since 2023-01-01, one"
+    " day a run, oldest first, in about 1.5 to 3 minutes a day. Each hour's"
+    " download has timeouts (for connecting, for a stalled read and for the whole"
+    " hour) and up to four retries with backoff.</li>"
+    "<li>gharchive_index, a one-off run by hand, builds those three tables from"
+    " <code>gharchive.events</code> for the days loaded before gharchive wrote"
+    " them.</li>"
     "<li><a href='"
     + ORCA_UI
-    + "/pipelines/mojo_repos' rel=noopener>mojo_repos</a> is a sensor on that"
-    " table. For each new day it finds the repositories that might hold Mojo,"
-    " checks them with GitHub, and keeps the Mojo ones in <code>mojo.repos</code>.</li>"
+    + "/pipelines/mojo_repos' rel=noopener>mojo_repos</a> is a sensor on"
+    " <code>gharchive.candidates</code>: for each new day it asks the GitHub API"
+    " about the candidates it hasn't checked before and keeps the Mojo ones in"
+    " <code>mojo.repos</code>, and every answer in"
+    " <code>mojo.checked</code>.</li>"
     "<li><a href='"
     + ORCA_UI
     + "/pipelines/mojo_history' rel=noopener>mojo_history</a> is keyed by"
-    " repository: each new one is cloned and its history read, the Mojo files"
-    " and lines at each commit into <code>mojo.commits</code> and each change of"
-    " Mojo version in its lock file into <code>mojo.migrations</code>, and its"
-    " git tags into <code>mojo.tags</code>.</li>"
+    " repository, 50 a run, and starts when <code>mojo.repos</code> gains some:"
+    " each is cloned and its full first-parent history read, the Mojo files and"
+    " lines at each commit into <code>mojo.commits</code>, each change of Mojo"
+    " version in its lock file into <code>mojo.migrations</code>, and its git"
+    " tags into <code>mojo.tags</code>.</li>"
+    "<li><a href='"
+    + ORCA_UI
+    + "/pipelines/mojo_versions' rel=noopener>mojo_versions</a>, keyed the same"
+    " way, reads the manifests at each repository's HEAD (<code>pixi.toml</code>,"
+    " <code>mojoproject.toml</code>, <code>pyproject.toml</code>,"
+    " <code>requirements.txt</code>, <code>recipe.yaml</code>): the Mojo version"
+    " they state into <code>mojo.repo_versions</code>, and the dependencies they"
+    " declare into <code>mojo.repo_deps</code>. From those the site shows what each"
+    " repo <em>depends on</em> and which census repos it is <em>used by</em>.</li>"
     "<li><a href='"
     + ORCA_UI
     + "/pipelines/mojo_activity' rel=noopener>mojo_activity</a> counts each"
-    " repo's GH Archive events per day, with no API calls: stars, forks,"
-    " releases, issues and pull requests opened, pushes and people, into"
-    " <code>mojo.activity</code> and <code>mojo.releases</code>. A repo found"
-    " today is read back over every day already loaded, so its history is"
-    " complete.</li>"
+    " repo's events per day from <code>gharchive.repo_hour</code>, with no API"
+    " calls: stars, forks, releases, issues and pull requests opened, pushes and"
+    " people, into <code>mojo.activity</code> and <code>mojo.releases</code>. A"
+    " repo found today is read back over every day already loaded, so its history"
+    " is complete.</li>"
     "<li><a href='"
     + ORCA_UI
-    + "/pipelines/mojo_stats' rel=noopener>mojo_stats</a> asks GitHub about every"
-    " repo each Monday (one request each) and keeps the stars, forks, issues"
-    " and topics week by week in <code>mojo.repo_stats</code>.</li></ul>"
-    "<p>Every run, with its steps, logs, machines and the tables it wrote, is on"
-    " <a href='"
+    + "/pipelines/mojo_stats' rel=noopener>mojo_stats</a> asks the GitHub API"
+    " about every repo each Monday (one request each) and keeps the stars, forks,"
+    " issues and topics week by week in <code>mojo.repo_stats</code>.</li></ul>"
+    "<p>Clones, in mojo_history and mojo_versions, have a time limit, retries"
+    " with backoff and a minimum transfer speed; a repository that still fails"
+    " is logged and skipped for that run.</p>"
+    "<h2>orca and the site</h2>"
+    "<p>orca's scheduler starts each run: on a schedule (gharchive daily,"
+    " mojo_stats weekly), when a table it watches gains a snapshot (the sensors"
+    " and the keyed pipelines), or to fill days not run yet. It keeps the runs,"
+    " their steps, attempts and logs in Postgres, and its UI at <a href='"
     + ORCA_UI
-    + "/runs' rel=noopener>orca.mojourney.dev</a>. The orca docs cover <a href='"
+    + "/runs' rel=noopener>orca.mojourney.dev</a> shows every run, with its steps,"
+    " logs, machines and the tables it wrote.</p>"
+    "<p>The site is a Mojo HTTP server that reads the Iceberg tables itself, with"
+    " no database in between. Every 30 minutes it looks at the tables' current"
+    " snapshots and rebuilds its pages in memory when one has moved, and at least"
+    " once a day, as the 30-day windows slide. The <em>Rising</em> list ranks"
+    " repos by what they gained in the last 30 days: stars + 3 &times; forks + 5"
+    " &times; the census repos that use it.</p>"
+    "<h2>It runs on a tiny machine</h2>"
+    "<p>The site, Postgres, the orca scheduler and its UI, and the gharchive"
+    " import's workers all run on one Hetzner CAX21: an ARM server with 4 vCPU,"
+    " 8 GB of RAM, an 80 GB disk and a 50 GB volume, for a fixed &euro;12.49 a"
+    " month. The warehouse, every table above, is in Hetzner Object Storage. An"
+    " hour of GH Archive in flight takes about 450 MB, so the import works on a"
+    " few hours at a time.</p>"
+    "<figure class=shot><img src='"
+    + HETZNER_SERVER_WEBP
+    + "' width=1200 height=232 alt='The server in"
+    " the Hetzner console: 4 vCPU, 8 GB RAM, 80 GB local disk plus one 50 GB"
+    " volume, 0 of 20 TB outgoing traffic used, 12.49 a month.'><figcaption>The"
+    " server's summary in the Hetzner console, which shows the price with a $"
+    " sign: it is &euro;12.49 a month.</figcaption></figure>"
+    "<p>For now the mojo_* pipelines (repos, history, versions, activity and"
+    " stats) run on a second machine while the full GH Archive import fills; they"
+    " move to orca remote workers next.</p>"
+    "<h2>More</h2>"
+    "<p>The orca docs cover <a href='"
     + ORCA_DOCS
     + "/build' rel=noopener>writing a pipeline</a>, <a href='"
     + ORCA_DOCS
@@ -2074,7 +2229,20 @@ def _stage(name: String, before: String, after: String) -> String:
 
 
 def how(req: Request) raises -> Response:
-    return _page("How it works", _how_head("overview") + String(HOW), "how")
+    return _page(
+        "How it works",
+        String(
+            _how_head("overview"),
+            HOW_LEAD,
+            "<figure class=diagram aria-label='The pipelines and the tables between them'>",
+            "<pre class=mermaid>",
+            html_escape(DIAGRAM),
+            "</pre></figure>",
+            HOW_PIPELINES,
+            MERMAID_JS,
+        ),
+        "how",
+    )
 
 
 def optimizations(req: Request) raises -> Response:
