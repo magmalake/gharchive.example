@@ -47,7 +47,7 @@ from orca.civil import now
 from threads import OpaquePtr, ThreadHandle
 
 from analytics import posthog_snippet
-from charts import compact, donut, line_chart
+from charts import compact, donut, grid_line, line_chart
 from jscan import micros_to_iso
 from listing import (
     NEW_30D,
@@ -193,6 +193,7 @@ a.kpi:hover{border-color:var(--border-strong);text-decoration:none}
 .kpi small{display:block;color:var(--muted);font-size:12.5px}.kpi span a{color:inherit}.kpi small a{color:var(--lake)}
 .kpi .up{color:var(--c2)}.kpi .down{color:var(--ember)}
 .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:16px}
+.cols>div{min-width:0}.cols .tbl{overflow-x:auto}.cols .tbl th{position:static}
 .card h3{margin:0 0 4px;font-size:15px;font-weight:600}
 .card .donut{max-width:240px;margin:4px auto}
 .donut text{fill:var(--muted);font:11px var(--mono)}
@@ -210,6 +211,15 @@ a.kpi:hover{border-color:var(--border-strong);text-decoration:none}
 th a{color:inherit;display:inline-block}th a:hover{color:var(--text);text-decoration:none}
 th[aria-sort] a{color:var(--text)}
 .asof{color:var(--muted);font-size:13px;max-width:78ch;margin-top:28px}
+.hq{position:relative;display:inline-block;vertical-align:middle;margin-left:6px;line-height:1}
+.help{position:relative;display:inline-flex;-webkit-tap-highlight-color:transparent;align-items:center;justify-content:center;width:18px;height:18px;padding:0;border:1px solid var(--border-strong);border-radius:50%;background:transparent;color:var(--muted);font:600 11px/1 ui-sans-serif,system-ui,sans-serif;cursor:pointer}
+.help::after{content:"";position:absolute;inset:-8px}
+.help:hover,.help[aria-expanded=true]{color:var(--text);border-color:var(--muted)}
+.help:focus-visible{outline:2px solid var(--lake);outline-offset:2px}
+.pop{position:absolute;z-index:20;top:calc(100% + 8px);left:-8px;width:max-content;max-width:min(340px,calc(100vw - 32px));padding:10px 12px;background:var(--surface);color:var(--text);border:1px solid var(--border-strong);border-radius:var(--radius-sm);box-shadow:var(--shadow);font:400 13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;letter-spacing:normal;text-transform:none;text-align:left;white-space:normal}
+.pop::before{content:"";position:absolute;left:0;right:0;top:-9px;height:9px}
+.pop[hidden]{display:none}
+.pop a{color:var(--lake)}
 @media (max-width:640px){.kpi span{font-size:22px}.top .wrap{gap:12px;flex-wrap:wrap;height:auto;padding-block:8px}.search{order:3;flex-basis:100%;max-width:none}.top nav{gap:12px}.top nav .sep,.top nav .arrow{display:none}.brand{font-size:15px}h1{font-size:24px}th,td{padding:9px 10px}main{padding-top:24px}footer nav{margin-left:0}}
 """
 
@@ -224,6 +234,41 @@ comptime MARK = (
     "<rect x=10.5 y=6 width=2.5 height=7 fill='#fff'/></svg>"
 )
 """The tab icon's amber square with three white bars: reads on both themes."""
+
+comptime HELP_JS = (
+    "<script>(()=>{const hs=[];"
+    "const place=p=>{p.style.left='';const w=document.documentElement.clientWidth,"
+    "r=p.getBoundingClientRect();let d=0;if(r.right>w-8)d=r.right-(w-8);if(r.left-d<8)d=r.left-8;"
+    "if(d)p.style.left=(parseFloat(getComputedStyle(p).left)-d)+'px'};"
+    "document.querySelectorAll('.hq').forEach(q=>{const b=q.querySelector('.help'),p=q.querySelector('.pop');"
+    "const s={pin:false,hov:false,foc:false};"
+    "const set=()=>{const o=s.pin||s.hov||s.foc;if(o!==p.hidden)return;p.hidden=!o;"
+    "b.setAttribute('aria-expanded',String(o));if(o)place(p)};"
+    "const close=()=>{s.pin=s.hov=s.foc=false;set()};hs.push({q,close});"
+    "q.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse'){s.hov=true;set()}});"
+    "q.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse'){s.hov=false;set()}});"
+    "b.addEventListener('focus',()=>{if(b.matches(':focus-visible')){s.foc=true;set()}});"
+    "b.addEventListener('blur',()=>{s.foc=false;s.pin=false;set()});"
+    "b.addEventListener('click',()=>{const pin=!s.pin;hs.forEach(h=>{if(h.q!==q)h.close()});"
+    "s.pin=pin;if(!pin){s.hov=false;s.foc=false}set()})});"
+    "document.addEventListener('pointerdown',e=>hs.forEach(h=>{if(!h.q.contains(e.target))h.close()}));"
+    "document.addEventListener('keydown',e=>{if(e.key==='Escape')hs.forEach(h=>h.close())})"
+    "})()</script>"
+)
+"""Opens and closes the `_help` popovers: on hover with a mouse, on keyboard
+focus, and pinned by a click or tap; a click or tap elsewhere or Escape closes
+them. No-op on pages without one."""
+
+
+def _help(id: String, label: String, text: String) -> String:
+    """A small "?" button after a title that shows `text` (HTML, phrasing
+    content only) in a popover; `label` names what it explains for screen
+    readers, and `id` must be unique on the page."""
+    return String(
+        "<span class=hq><button type=button class=help aria-expanded=false aria-controls='", id,
+        "' aria-describedby='", id, "' aria-label='About ", html_escape(label), "'>?</button>",
+        "<span class=pop id='", id, "' role=tooltip hidden>", text, "</span></span>",
+    )
 
 
 def _nav(href: String, label: String, current: Bool) -> String:
@@ -275,7 +320,7 @@ def _page(
         " say at each commit.</p>",
         "<nav><a href='https://mlake.dev' rel=noopener>mlake.dev</a>",
         "<a href='https://github.com/magmalake' rel=noopener>GitHub</a>",
-        "<a href='/api/repos'>JSON</a></nav></div></footer></body></html>",
+        "<a href='/api/repos'>JSON</a></nav></div></footer>", HELP_JS, "</body></html>",
     )
     var resp = Response(status=200, reason="OK", body=List[UInt8](h.as_bytes()))
     resp.headers.set("Content-Type", "text/html; charset=utf-8")
@@ -797,8 +842,13 @@ def repos_page(req: Request, c: Cache) raises -> Response:
         h.write(
             "<p class=lead><strong>", len(idx), " repo" if len(idx) == 1 else " repos",
             "</strong>", " of " if q.has_filter() else "", String(len(c.libs)) if q.has_filter() else "",
-            " found in GH Archive. Size is lines of Mojo at the last commit read; age is since GitHub",
-            " created the repository. Click a column to sort.</p>",
+            " found in GH Archive.",
+            _help(
+                "h-repos", "the Repos table",
+                "Size is lines of Mojo at the last commit read; age is since GitHub created the"
+                " repository. Click a column to sort.",
+            ),
+            "</p>",
             _filter_chips(q), _filter_options(q, c),
         )
         if len(idx) == 0:
@@ -914,9 +964,10 @@ def _curve_card(
     var svg = line_chart(months, names, series, colors, percent, aria, area)
     # The class lets the chart's text be sized for small screens.
     svg = svg.replace("<svg viewBox", "<svg class=lc viewBox", )
+    var id = String("h-", title.lower().replace(" ", "-"))
     return String(
-        "<div class=card><h3>", html_escape(title), "</h3>", svg,
-        _legend(names, colors, now_vals), "<p class=mute>", note, "</p></div>",
+        "<div class=card><h3>", html_escape(title), _help(id, title, note), "</h3>", svg,
+        _legend(names, colors, now_vals), "</div>",
     )
 
 
@@ -1003,15 +1054,24 @@ def overview(req: Request, c: Cache) raises -> Response:
         )
         # Repos per Mojo version family.
         h.write(
-            "<h2>Repos by Mojo version</h2><p class=sub>The version a repo states: its latest lock file or",
-            " manifest, else its CI, Docker or README files. <em>no-manifest</em> is a repo with nothing",
-            " there to read (mostly early projects from before magic and pixi); <em>unknown</em> has a",
-            " manifest that names no Mojo version, or isn't read yet. Click a slice for its repos.</p>",
-            "<p class=sub>Counting <strong>", "detected and estimated versions" if estimate else "detected versions only",
+            "<h2>Repos by Mojo version",
+            _help(
+                "h-versions", "Repos by Mojo version",
+                "The version a repo states: its latest lock file or manifest, else its CI, Docker or"
+                " README files. <em>no-manifest</em> is a repo with nothing there to read (mostly"
+                " early projects from before magic and pixi); <em>unknown</em> has a manifest that"
+                " names no Mojo version, or isn't read yet. Click a slice for its repos.",
+            ),
+            "</h2><p class=sub>Counting <strong>", "detected and estimated versions" if estimate else "detected versions only",
             "</strong>. <a href='", "/" if estimate else "/?estimate=1", "'>",
             "Show detected only" if estimate else "Add an estimate by date for repos with no version",
-            "</a>", String(" (the Mojo release current at the repo's last Mojo commit; a guess, not a detection)") if not estimate else String(),
-            ".</p>",
+            "</a>",
+            _help(
+                "h-estimate", "the estimate by date",
+                "The estimate is the Mojo release current at the repo's last Mojo commit: a guess,"
+                " not a detection. It fills in only repos with no detected version.",
+            ),
+            "</p>",
             "<div class=cols>", _family_donut(c, False, estimate), _family_donut(c, True, estimate), "</div>",
         )
         # Growth.
@@ -1028,8 +1088,13 @@ def overview(req: Request, c: Cache) raises -> Response:
             var commits_series = List[List[Int64]]()
             commits_series.append(ov.commits_series.copy())
             h.write(
-                "<h2>Growth</h2><p class=sub>Monthly, from each repo's full git history, so the",
-                " curves reach back before the census found the repos.</p><div class=cols>",
+                "<h2>Growth",
+                _help(
+                    "h-growth", "Growth",
+                    "Monthly, from each repo's full git history, so the curves reach back before"
+                    " the census found the repos.",
+                ),
+                "</h2><div class=cols>",
                 _curve_card(
                     "Lines of Mojo", m, lines_names, lines_series, single_color, False,
                     "Lines of Mojo at the end of each month, summed over every repo.", True,
@@ -1072,35 +1137,46 @@ def overview(req: Request, c: Cache) raises -> Response:
         # Rising and the most active repos, side by side.
         h.write("<div class=cols><div>")
         h.write(
-            "<h2>Rising</h2><p class=sub>The repos with the highest score over the last 30 days:",
-            " the stars and forks they gained (GH Archive's WatchEvents and ForkEvents on the",
-            " days loaded so far) and the census repos that depend on them.</p>",
+            "<h2>Rising",
+            _help(
+                "h-rising", "Rising",
+                String(
+                    "The repos with the highest score over the last 30 days: the stars and forks they",
+                    " gained (GH Archive's WatchEvents and ForkEvents on the days loaded so far) and the",
+                    " census repos that depend on them. Score = stars gained + ", RISING_FORK_WEIGHT,
+                    " &times; forks gained + ", RISING_USED_BY_WEIGHT, " &times; repos using it now; a",
+                    " repo needs a new star or fork to be ranked. Stars is its total now.",
+                ),
+            ),
+            "</h2>",
         )
         if len(c.rising) > 0:
             h.write(
                 "<div class=tbl><table><thead><tr>",
-                "<th>Repository</th><th class=num>Stars, 30 days</th><th class=num>Forks, 30 days</th>",
+                "<th>Repository</th><th class=num>Stars 30d</th><th class=num>Stars</th>",
+                "<th class=num>Forks 30d</th>",
                 "<th class=num>Used by</th><th class=num>Score</th></tr></thead><tbody>",
             )
             for i in range(len(c.rising)):
                 h.write(
                     "<tr><td><a class=repo href='/repos/", html_escape(c.rising[i]), "'>",
                     html_escape(c.rising[i]), "</a></td><td class=num>", _signed(c.rising_gain[i]),
+                    "</td><td class=num>", _n(c.rising_stars[i]),
                     "</td><td class=num>", _signed(c.rising_forks[i]),
                     "</td><td class=num>", _n(c.rising_used_by[i]),
                     "</td><td class=num>", _n(c.rising_score[i]), "</td></tr>",
                 )
             h.write("</tbody></table></div>")
-            h.write(
-                "<p class=mute>Score = stars gained + ", RISING_FORK_WEIGHT, " &times; forks gained + ",
-                RISING_USED_BY_WEIGHT, " &times; repos using it now; a repo needs a new star or fork",
-                " to be ranked.</p>",
-            )
         h.write(
             "</div><div><h2><a href='",
             html_escape(list_url(ListQuery(String("commits30"), False, String(), False, String(), False))),
-            "'>Most active</a></h2><p class=sub>The repos with the most commits in the last 30 days,",
-            " and how many lines of Mojo they grew by.</p>",
+            "'>Most active</a>",
+            _help(
+                "h-active", "Most active",
+                "The repos with the most commits in the last 30 days, and how many lines of Mojo"
+                " they grew by.",
+            ),
+            "</h2>",
         )
         if len(c.active_repos) > 0:
             h.write(
@@ -1120,9 +1196,14 @@ def overview(req: Request, c: Cache) raises -> Response:
             h.write(
                 "<div class=cols><div><h2><a href='",
                 html_escape(list_url(ListQuery(String("used_by"), False, String(), False, String(), False))),
-                "'>Most depended on</a></h2><p class=sub>The repos the most census repos declare",
-                " a dependency on, in the manifests at their HEAD (pixi, magic, pyproject,",
-                " recipe): by GitHub URL, package name or repo name.</p>",
+                "'>Most depended on</a>",
+                _help(
+                    "h-depended", "Most depended on",
+                    "The repos the most census repos declare a dependency on, in the manifests at"
+                    " their HEAD (pixi, magic, pyproject, recipe): by GitHub URL, package name or"
+                    " repo name.",
+                ),
+                "</h2>",
                 "<div class=tbl><table><thead><tr><th>Repository</th><th class=num>Used by</th>",
                 "<th class=num>Stars</th><th class=num>Forks</th></tr></thead><tbody>",
             )
@@ -1136,17 +1217,26 @@ def overview(req: Request, c: Cache) raises -> Response:
             h.write("</tbody></table></div></div></div>")
         # As of.
         h.write(
-            "<p class=asof>Data as of ", _as_of(c.sources.as_of_ms), " (the latest snapshot of the tables",
-            " behind this page; every run is on <a href='", ORCA_UI, "/runs' rel=noopener>orca.mojourney.dev/runs</a>).",
-            " Refreshed every ", _span(refresh_secs()), "; built ", _span(Int(now() - c.built_at)), " ago.",
-            " Repos are discovered from the GH Archive days loaded so far",
+            "<p class=asof>Data as of ", _as_of(c.sources.as_of_ms), ". Refreshed every ",
+            _span(refresh_secs()), "; built ", _span(Int(now() - c.built_at)), " ago.",
         )
         if c.sources.days > 0:
             h.write(
-                ": ", c.sources.days, " days, ", c.sources.first_day, " to ", c.sources.last_day,
-                ". A repo is found only when an event of it falls on a loaded day, so the repo count is a lower bound",
+                " GH Archive days loaded: ", c.sources.days, ", ", c.sources.first_day, " to ",
+                c.sources.last_day, ".",
             )
-        h.write(".</p>")
+        h.write(
+            _help(
+                "h-asof", "the data",
+                String(
+                    "As of the latest snapshot of the tables behind this page; every run is on <a href='",
+                    ORCA_UI, "/runs' rel=noopener>orca.mojourney.dev/runs</a>. Repos are discovered",
+                    " from the GH Archive days loaded so far: a repo is found only when an event of it",
+                    " falls on a loaded day, so the repo count is a lower bound.",
+                ),
+            ),
+            "</p>",
+        )
         return _page("", h^, "overview")
     except e:
         return internal_error(String(e))
@@ -1436,7 +1526,7 @@ def _line_chart(
     for t in ticks:
         var y = up + ph - t * ph // top
         svg.write(
-            "<line class=grid x1=", left, " x2=", w - right, " y1=", y, " y2=", y, "/>",
+            grid_line(left, w - right, y),
             "<text x=", left - 6, " y=", y + 4, " text-anchor=end>", t, "</text>",
         )
     # X labels, thinned to about twelve.
@@ -1469,15 +1559,26 @@ def _line_chart(
     )
 
 
+def _migrations_head() -> String:
+    """The Migrations page's title and lead, with what a migration is in a popover."""
+    return String(
+        "<h1>Mojo version migrations</h1><p class=lead>The repos moving to each Mojo version, per month.",
+        _help(
+            "h-migrations", "migrations",
+            "A migration is a repo's lock file (or its manifest, when there's no lock) moving to a"
+            " Mojo version between two of its commits. Each number is the repos whose lock file"
+            " moved to that version that month. Versions are in Mojo's own order across the"
+            " renumbering: pre-1.0 (24.x to 0.26.x, one line), then each 1.x minor.",
+        ),
+        "</p>",
+    )
+
+
 def _migrations_body(rows: List[VersionMonth]) raises -> String:
     """The Migrations page's HTML for `rows` (at least one), rendered once
     per cache build."""
     var h = String(
-        "<h1>Mojo version migrations</h1><p class=lead>A migration is a repo's lock",
-        " file (or its manifest, when there's no lock) moving to a Mojo version between",
-        " two of its commits. Each number is the repos whose lock file moved to that",
-        " version that month. Versions are in Mojo's own order across the renumbering:",
-        " pre-1.0 (24.x to 0.26.x, one line), then each 1.x minor.</p>",
+        _migrations_head(),
     )
     h.write(_versions_chart(rows))
     var late = List[VersionMonth]()
@@ -1531,11 +1632,7 @@ def _versions_table(rows: List[VersionMonth]) raises -> String:
 def migrations_page(req: Request, c: Cache) raises -> Response:
     try:
         var h = String(
-            "<h1>Mojo version migrations</h1><p class=lead>A migration is a repo's lock",
-            " file (or its manifest, when there's no lock) moving to a Mojo version between",
-            " two of its commits. Each number is the repos whose lock file moved to that",
-            " version that month. Versions are in Mojo's own order across the renumbering:",
-            " pre-1.0 (24.x to 0.26.x, one line), then each 1.x minor.</p>",
+            _migrations_head(),
         )
         if len(c.version_rows) == 0:
             h.write(

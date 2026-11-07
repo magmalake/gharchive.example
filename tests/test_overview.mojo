@@ -6,7 +6,7 @@ sorting and filtering, and the charts' text.
 
 from std.testing import TestSuite, assert_equal, assert_true
 
-from charts import compact, donut, line_chart, nice_ceil
+from charts import compact, donut, grid_line, line_chart, nice_ceil
 from jscan import days_from_civil
 from listing import (
     NEW_30D,
@@ -310,6 +310,38 @@ def test_compact() raises:
     assert_equal(nice_ceil(130), 200)
     assert_equal(nice_ceil(8_365_141), 10_000_000)
     assert_equal(nice_ceil(2000), 2000)
+
+
+def _closes_cleanly(svg: String) -> Bool:
+    """Whether every `/>` follows a quote or a space. In HTML an unquoted
+    attribute value takes the `/` (`y2=202/>` is `y2="202/"`), so the element
+    stays open and the browser hides every later mark inside it."""
+    var b = svg.as_bytes()
+    for i in range(1, len(b) - 1):
+        if Int(b[i]) == ord("/") and Int(b[i + 1]) == ord(">"):
+            var p = Int(b[i - 1])
+            if p != ord("'") and p != ord('"') and p != ord(" "):
+                return False
+    return True
+
+
+def test_svg_elements_close() raises:
+    assert_true(_closes_cleanly(grid_line(46, 550, 202)))
+    assert_true(not _closes_cleanly("<line y2=202/><polyline/>"))
+    var months: List[String] = ["2025-01", "2025-02"]
+    var names: List[String] = ["a", "b"]
+    var series = List[List[Int64]]()
+    series.append([1, 5])
+    series.append([2, 3])
+    var cs: List[String] = ["var(--c0)", "var(--c1)"]
+    assert_true(_closes_cleanly(line_chart(months, names, series, cs, False, "x", True)))
+    assert_true(_closes_cleanly(line_chart(months, names, series, cs, True, "x")))
+    var labels: List[String] = ["1.x", "unknown"]
+    var values: List[Int] = [3, 0]
+    var hrefs: List[String] = ["/a", "/b"]
+    assert_true(_closes_cleanly(donut(labels, values, cs, hrefs, "3", "repos", "d")))
+    var none: List[Int] = [0, 0]
+    assert_true(_closes_cleanly(donut(labels, none, cs, hrefs, "0", "repos", "d")))
 
 
 def test_donut_and_line() raises:
