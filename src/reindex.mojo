@@ -15,6 +15,8 @@ from lake import CANDIDATES, GH_RELEASES, REPO_HOUR, EVENTS
 
 
 def _fold(mut index: HourIndex, b: RecordBatch, lo: Int64) raises:
+    """Adds the events of a batch of `gharchive.events` that fall in the hour
+    starting at `lo` (microseconds) to `index`."""
     ref ty = b.column(col(b, "type"))
     ref rp = b.column(col(b, "repo"))
     ref ac = b.column(col(b, "actor"))
@@ -25,6 +27,8 @@ def _fold(mut index: HourIndex, b: RecordBatch, lo: Int64) raises:
         var at_r = i64_at(at, r)
         if at_r < lo or at_r >= lo + 3_600_000_000:
             continue  # the filter keeps whole row groups
+        # The payload is read in place (its offsets in the shared buffer),
+        # without a String per event.
         var pr = str_range(pl, r)
         index.add(
             str_at(ty, r), str_at(rp, r), str_at(ac, r), at_r,
@@ -42,6 +46,8 @@ def index_job(day: String, hour: Int, snapshot: Int64, marker: Bool) -> String:
 def index_hour(job: String) raises -> IndexFiles:
     """On a worker: one hour of `gharchive.events` (at the snapshot in `job`,
     `day\\nhour\\nsnapshot[\\nmarker]`) as index files, uncommitted."""
+    # The same parts as `index_job` wrote, in order; the marker is optional
+    # and on when absent.
     var parts = job.split("\n")
     var day = String(parts[0])
     var hour = Int(parts[1])
@@ -50,6 +56,10 @@ def index_hour(job: String) raises -> IndexFiles:
     var marker = len(parts) < 4 or String(parts[3]) != "0"
     var index = HourIndex(lo if marker else 0)
     try:
+        # The hour is read from `gharchive.events` at the step's snapshot.
+        # The events are partitioned by day, and the filter on `created_at`
+        # narrows to the hour: files and row groups outside it are skipped,
+        # and `_fold` drops the rest of a row group.
         var events = load_dataset(EVENTS)
         var filter = String(
             '["and",[">=","created_at",', lo, '],["<","created_at",',

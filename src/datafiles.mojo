@@ -135,6 +135,9 @@ struct TableWriter(BatchSink, Movable):
         self.group_bytes = group_bytes
 
     def put(mut self, var rows: EventRows) raises:
+        """Orders a file's rows if asked to (each file on its own: rows are
+        in order within a file, not across the hour; only their row numbers
+        move), then writes them."""
         var t_sort = perf_counter_ns()
         var order = order_by_repo_type(rows) if self.sorted else arrival_order(
             len(rows)
@@ -150,6 +153,8 @@ struct TableWriter(BatchSink, Movable):
         self.write_ns += Int(perf_counter_ns() - t0)
 
     def finish(deinit self) -> DataFiles:
+        """Closes the last file and returns the entries of all of them, with
+        the row count and the time spent sorting and writing."""
         var out = DataFiles()
         out.rows = self.rows
         out.sort_ms = self.sort_ns // 1_000_000

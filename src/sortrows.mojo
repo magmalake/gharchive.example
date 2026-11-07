@@ -50,6 +50,9 @@ def order_by_text(
     """The row numbers of `batch` in the order of the string columns `first`
     and then `second`, bytewise. Rows with equal keys stay in their original
     order, so the same batch always gives the same file."""
+    # Sorts row numbers, not rows: comparing two rows is a byte comparison in
+    # the Arrow buffers, with no string objects, and the columns are moved
+    # once at the end (`take_rows`).
     var n = batch.num_rows
     var order = List[Int32](capacity=n)
     for i in range(n):
@@ -58,6 +61,8 @@ def order_by_text(
     ref b = batch.column(col(batch, second))
     if len(a.large_offsets) > 0 or len(b.large_offsets) > 0:
         raise Error("sortrows: ", first, " and ", second, " must be 32-bit strings")
+    # Raw pointers into the buffers, captured by the comparison below. The
+    # batch outlives the sort.
     var av = _Bytes(unsafe_from_address=Int(a.values.unsafe_ptr()))
     var ao = _Offsets(unsafe_from_address=Int(a.offsets.unsafe_ptr()))
     var bv = _Bytes(unsafe_from_address=Int(b.values.unsafe_ptr()))
@@ -72,6 +77,8 @@ def order_by_text(
         c = _compare(bv, bo, i, bv, bo, j)
         if c != 0:
             return c < 0
+        # Equal keys keep their original order, so the result doesn't depend
+        # on the sort algorithm.
         return x < y
 
     sort[stable=True](Span(order), before)
@@ -85,12 +92,15 @@ def _taken(a: ArrayData, order: Span[Int32, _]) raises -> ArrayData:
     out.nullable = a.nullable
     out.field_id = a.field_id
     out.length = n
+    # An empty column still needs its first offset (offsets are n + 1 long).
     if n == 0:
         if len(a.offsets) > 0:
             out.offsets.append(0)
         return out^
     if len(a.large_offsets) > 0 or len(a.children) > 0:
         raise Error("sortrows: column ", a.name, " is not a flat column")
+    # Validity is a bitmap, one bit a row, rebuilt in the new order. A column
+    # with no nulls may carry no bitmap at all, so all its rows are valid.
     var has_validity = a.null_count > 0 and len(a.validity) > 0
     out.validity.resize((n + 7) >> 3, 0)
     var nulls = 0
@@ -122,6 +132,8 @@ def _taken(a: ArrayData, order: Span[Int32, _]) raises -> ArrayData:
             out.offsets[k + 1] = Int32(at)
         out.values.resize(unsafe_uninit_length=at)
     else:
+        # Fixed-width values (the 8-byte ids and timestamps): row k is
+        # `width` bytes at k * width.
         if len(a.values) % a.length != 0 or a.length != n:
             raise Error("sortrows: column ", a.name, " is not fixed-width bytes")
         var width = len(a.values) // a.length

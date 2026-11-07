@@ -1,4 +1,14 @@
-"""GH Archive hours into `gharchive.events` record batches."""
+"""GH Archive hours into `gharchive.events` rows.
+
+`fetch_hour` is the body of gharchive's per-hour dista task: it downloads an
+hour (`fetch.Download`), gunzips what has arrived (`decode_index`), parses
+the NDJSON lines into columns (`EventParser`, `eventrows.EventRows`) and
+hands each full file's rows (`ROWS_PER_BATCH`) to a sink that writes them
+into the table (`datafiles.TableWriter`), all at once, so an hour is never
+fully in memory, as JSON or as rows (#37). The compressed hour is given back
+as it is decoded (`GzInput.release`). The same pass feeds
+`hourindex.HourIndex` for the three index tables.
+"""
 
 from std.os import getenv
 from std.time import perf_counter_ns
@@ -15,6 +25,8 @@ from hourindex import HourIndex, write_index
 from jscan import Range, find_newline, scan_event, text, timestamp_micros
 
 comptime ROWS_PER_BATCH = 50_000
+"""Rows per batch, which is also the rows of each Parquet file of the
+events: the unit that is sorted by (repo, type) and written."""
 
 
 def hour_url(day: String, hour: Int) -> String:
@@ -25,7 +37,9 @@ def hour_url(day: String, hour: Int) -> String:
 
 
 def parse_hours(spec: String) raises -> List[Int]:
-    """`GHARCHIVE_HOURS`: empty for 0-23, else `A-B` or `A,B,C`."""
+    """`GHARCHIVE_HOURS`: empty for 0-23, else `A-B` or `A,B,C`. The step
+    identifies a committed hour by its place in this list, so the order
+    given is the order the hours are committed in."""
     var out = List[Int]()
     if spec.byte_length() == 0:
         for h in range(24):
@@ -70,6 +84,8 @@ def _add_text(mut c: TextColumn, data: Span[UInt8, _], r: Range, null_if_empty: 
 
 
 def _int(s: String) -> Int64:
+    """The digits at the start of `s` as a number (GH Archive's event ids are
+    strings in the JSON)."""
     var v = Int64(0)
     for c in s.as_bytes():
         if c < 48 or c > 57:
@@ -79,6 +95,9 @@ def _int(s: String) -> Int64:
 
 
 struct EventsAndIndex(Movable):
+    """What a finished parser has: the last files' rows and the hour's
+    index."""
+
     var rows: List[EventRows]
     var index: HourIndex
 
@@ -87,6 +106,7 @@ struct EventsAndIndex(Movable):
         self.index = index^
 
     def take_rows(deinit self) -> List[EventRows]:
+        """The rows, giving up the index."""
         return self.rows^
 
     def take_batches(deinit self) raises -> List[RecordBatch]:
@@ -97,6 +117,7 @@ struct EventsAndIndex(Movable):
         return out^
 
     def take_index(deinit self) -> HourIndex:
+        """The index, giving up the rows."""
         return self.index^
 
 
@@ -131,6 +152,9 @@ struct EventParser(Movable):
             start = end + 1
 
     def _line(mut self, data: Span[UInt8, _], line: Range) raises:
+        """One event: its fields are located by a single scan of the line
+        (`jscan.scan_event`, no JSON tree), and each is copied into its
+        column. The payload is kept as the event's raw JSON text."""
         var f = scan_event(data, line)
         if not (f.id.found() and f.created_at.found()):
             self.bad += 1
@@ -155,17 +179,21 @@ struct EventParser(Movable):
         else:
             self.cols.payload.add_null()
         self.rows += 1
+        # A full file's rows are moved to `out` and fresh columns started;
+        # `decode_index` drains `out` to the sink after every window, so full
+        # files don't pile up.
         if self.rows % ROWS_PER_BATCH == 0:
             var full = EventRows()
             swap(full, self.cols)
             self.out.append(full^)
 
     def finish(deinit self) raises -> List[RecordBatch]:
+        """The batches, with the last partial one, dropping the index."""
         var both = self^.finish_index()
         return both^.take_batches()
 
     def finish_index(deinit self) raises -> EventsAndIndex:
-        """The last batches, and what `index` collected."""
+        """The last files' rows, and what `index` collected."""
         var out = self.out^
         if self.rows % ROWS_PER_BATCH != 0:
             out.append(self.cols^)
@@ -184,11 +212,15 @@ def parse_events(data: Span[UInt8, _]) raises -> List[RecordBatch]:
 
 
 comptime CHUNK = 1 << 23
-"""JSON decoded per step: the window the parser reads lines from."""
+"""JSON decoded per step (8 MiB): the window the parser reads lines from.
+The decoder's output buffer is twice this and is compacted after each
+window, so the decoded JSON in memory stays about this size however big
+the hour is."""
 
 
 struct Collect(BatchSink, Movable):
-    """Keeps the rows, as record batches in arrival order."""
+    """Keeps the rows, as record batches in arrival order (a sink for tests
+    and tools that want them all)."""
 
     var batches: List[RecordBatch]
 
@@ -207,6 +239,11 @@ struct Timing(Copyable, Movable):
     var gunzip_ms: Int
     var parse_ms: Int
     var wait_ms: Int
+
+
+# `decode_gz` and `decode_index` are generic over the input (`GzInput`: a
+# whole buffer, or a download still arriving) and the sink (`BatchSink`: where
+# full batches go), so the same loop serves tests, tools and the hour task.
 
 
 def _drain[S: BatchSink](mut p: EventParser, mut sink: S) raises -> Int:
@@ -249,6 +286,12 @@ def decode_index[
     var wait_ns = 0
     var gz = GzipReader(CHUNK * 2)
     var p = EventParser(indexing)
+    # `lo` is where the parser has got to in the decoder's output: lines
+    # before it are done and can be dropped. Each round inflates up to about
+    # CHUNK more bytes of what has arrived, parses the whole lines among
+    # them, moves the unparsed tail of a line to the front (`compact`), hands
+    # finished batches to the sink, and, if the inflater ran out of input,
+    # waits for the download to supply more.
     var lo = 0
     while True:
         var complete = input.complete()
@@ -263,6 +306,8 @@ def decode_index[
         if st == InflateStatus.FINISHED:
             p.feed(gz.output(), lo, len(gz))
             break
+        # The window ends mid-line: parse up to the last newline and keep
+        # the partial line for the next round.
         var nl = len(gz) - 1
         while nl >= lo and gz.output()[nl] != 0x0A:
             nl -= 1
@@ -275,6 +320,8 @@ def decode_index[
             var t1 = perf_counter_ns()
             _ = input.wait(gz.input_used() + MARGIN)
             wait_ns += Int(perf_counter_ns() - t1)
+    # The parser's index replaces the caller's by `swap`; the caller's
+    # `marker` (set before parsing) is put back.
     var marker = index.marker
     var done = p^.finish_index()
     swap(index, done.index)
@@ -306,6 +353,8 @@ def fetch_hour(
     and parses it and writes it into `table`'s data files; returns them
     uncommitted."""
     var t0 = perf_counter_ns()
+    # The download starts on its own thread here and the decoding below
+    # overlaps it (`timing.wait_ms` is the time the decoder waited on it).
     var dl = Download(hour_url(day, hour))
     # Each 50,000-row file is in (repo, type) order: a repository's events
     # repeat its URLs, and rows that resemble each other share a page. On

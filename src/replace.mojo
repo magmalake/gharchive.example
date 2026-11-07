@@ -22,6 +22,10 @@ from parquet import RecordBatch
 
 @fieldwise_init
 struct PartitionFiles(Copyable, Movable):
+    """Data files found by `partition_files`: their paths, and the rows they
+    hold according to the manifests (which callers compare with the rows they
+    actually read, to be sure they read everything they are about to remove)."""
+
     var paths: List[String]
     var rows: Int64
 
@@ -35,6 +39,10 @@ def partition_files(
     var out = PartitionFiles(List[String](), 0)
     if not t.metadata.has_current_snapshot:
         return out^
+    # `plan_files` lists the files without reading them. The filter only
+    # prunes what planning looks at; the partition value of each file decides
+    # (`f.partition[0]` is the first partition field: the month, for the
+    # tables replaced here, or the day).
     for task in t.scan().filter(filter).plan_files():
         ref f = task.data_file
         if len(f.partition) == 0 or not f.partition[0].valid:
@@ -46,7 +54,8 @@ def partition_files(
 
 
 def already_committed(ctx: Ctx, t: Table) -> Bool:
-    """Whether an earlier attempt of this step made its next commit to `t`."""
+    """Whether an earlier attempt of this step made its next commit to `t`
+    (a retry then must not write or remove anything again)."""
     return find_commit(ctx, t) >= 0
 
 
@@ -64,12 +73,17 @@ def replace_files(
     for b in batches:
         if b.num_rows > 0:
             some.append(b.copy())
+    # A retry whose first attempt got this far gets that snapshot's id back
+    # from `append` (which recognises it) and writes nothing.
     if already_committed(ctx, t):
         return append(ctx, t, some)
     if len(removed) == 0 and len(some) == 0:
         return -1  # nothing to change, and no snapshot for it
     if len(removed) == 0:
         return append(ctx, t, some)
+    # The new files and the removal of the old ones are one snapshot: a
+    # reader sees the table before or after the replace, never with both
+    # copies of a row or with neither.
     var files = FileChanges()
     if len(some) > 0:
         files.added_data = write_files(t, some).files.copy()
