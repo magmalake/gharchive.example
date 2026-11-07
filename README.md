@@ -38,7 +38,10 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   (`id`, `type`, `created_at`, `repo`, `actor`, `payload` as JSON text),
   partitioned by day. A day's hours are dista tasks: each streams its
   hour in on a reader thread while it gunzips and parses what has
-  arrived, a window at a time, and writes the Parquet files on the worker; the step commits each hour's files
+  arrived, a window at a time, and writes the Parquet files on the worker
+  (a 50,000-row file at a time, sorted by repository and type, in 16 MB row
+  groups, so an hour in flight takes about 450 MB:
+  `tools/hour_memory.mojo` measures it); the step commits each hour's files
   to the events as one append, in order, and a retry skips the hours already
   committed. A new run of a day that has rows (`orca backfill --rerun`)
   replaces them: its first hour's commit removes the day's earlier files.

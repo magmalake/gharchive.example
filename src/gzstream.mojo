@@ -1,6 +1,7 @@
 """Compressed input that may still be arriving, for deflate-mojo's
 `GzipReader`: `have` says how much is there, `complete` whether that is
-all of it, `view` the bytes, `wait` blocks for more. `Whole` is a buffer
+all of it, `view` the bytes, `wait` blocks for more, `release` says which
+are done with. `Whole` is a buffer
 that is all there already; `fetch.Download` is a body still downloading.
 """
 
@@ -22,6 +23,11 @@ trait GzInput:
 
     def wait(self, want: Int) raises -> Int:
         """Blocks until `want` bytes are there or all are; returns `have()`."""
+        ...
+
+    def release(self, upto: Int):
+        """The reader is done with the first `upto` bytes: they may be
+        freed, and `view` is not read below `upto` again."""
         ...
 
 
@@ -52,3 +58,6 @@ struct Whole(GzInput, Movable):
 
     def wait(self, want: Int) raises -> Int:
         return self.n
+
+    def release(self, upto: Int):
+        pass

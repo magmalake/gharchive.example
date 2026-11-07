@@ -5,10 +5,12 @@ is set (orca gives runs the secret registered with `--secret`); without it
 the REST API allows 60 requests an hour, which is enough for a local run.
 """
 
+from std.ffi import external_call
 from std.memory import unsafe_memcpy
 from std.memory.alloc import unsafe_alloc
 from std.os import getenv
 from std.os.path import exists
+from std.sys.info import CompilationTarget
 from std.time import perf_counter_ns, sleep
 
 from flare.http import HttpClient, HttpStreamResponse, Request, Response
@@ -57,6 +59,35 @@ def get_bytes(url: String, timeout_ms: Int = 600_000) raises -> List[UInt8]:
     return body^
 
 
+comptime _AHEAD = 1 << 25
+"""How far the reader thread may run ahead of what the decoder released:
+32 MB of compressed input, a few seconds of decoding. Beyond it the thread
+waits, and TCP holds the rest of the body back."""
+
+comptime _RELEASE_STEP = 1 << 20
+"""`Download.release` gives input back a megabyte at a time: a multiple of
+any page size, so every boundary it unmaps at is page-aligned."""
+
+
+def _map(size: Int) raises -> Int:
+    """`size` bytes of fresh anonymous memory (`mmap`), by address."""
+    comptime PROT_READ_WRITE: Int = 3
+    comptime MAP_PRIVATE: Int = 2
+    comptime MAP_ANON: Int = 0x1000 if CompilationTarget.is_macos() else 0x20
+    # The signature memory-region declares, which the same program links.
+    var p = external_call["mmap", Int](
+        0, size, PROT_READ_WRITE, MAP_PRIVATE | MAP_ANON, -1, Int64(0)
+    )
+    if p == -1 or p == 0:
+        raise Error("download: can't map ", size, " bytes")
+    return p
+
+
+def _unmap(addr: Int, size: Int):
+    if size > 0:
+        _ = external_call["munmap", Int32](addr, size)
+
+
 struct _Shared(Movable):
     """What a download's reader thread and its consumer share."""
 
@@ -65,6 +96,12 @@ struct _Shared(Movable):
     var size: Int
     """`Content-Length`, or -1."""
     var buf: List[UInt8]
+    """The body when there was no `Content-Length`."""
+    var region: Int
+    """Otherwise the body is here: `size` bytes mapped for it (`_map`), of
+    which the consumer has given the first `released` back (`release`;
+    release-stored, as the reader thread reads it)."""
+    var released: Int64
     var have: Int64
     """Bytes of `buf` that have arrived (release-stored by the reader)."""
     var state: Int64
@@ -78,7 +115,9 @@ struct _Shared(Movable):
         self.client = client^
         self.resp = resp^
         self.size = size
-        self.buf = List[UInt8](length=max(size, 0), fill=0)
+        self.buf = List[UInt8]()
+        self.region = 0
+        self.released = 0
         self.have = 0
         self.state = 0
         self.err = String()
@@ -107,10 +146,15 @@ def _pull(arg: OpaquePtr) -> OpaquePtr:
             _cell(sh[].have).store(Int64(sh[].size))
         else:
             var at = 0
-            var dst = sh[].buf.unsafe_ptr()
+            var dst = UnsafePointer[UInt8, MutAnyOrigin](
+                unsafe_from_address=sh[].region
+            )
             while True:
                 if _cell(sh[].state).load() == 3:
                     return arg
+                if at - Int(_cell(sh[].released).load()) >= _AHEAD:
+                    sleep(0.001)
+                    continue
                 var chunk = sh[].resp.read_chunk(1 << 20)
                 if len(chunk) == 0:
                     break
@@ -160,6 +204,8 @@ struct Download(GzInput, Movable):
                 size = -1
         var p = unsafe_alloc[_Shared](1)
         p.unsafe_write(_Shared(c^, resp^, size))
+        if size > 0:
+            p[].region = _map(size)
         self.addr = Int(p)
         self.url = url
         self.thread = ThreadHandle.spawn[_pull](opaque_ptr(self.addr))
@@ -182,6 +228,9 @@ struct Download(GzInput, Movable):
         except:
             pass
         var p = Pointer[_Shared, MutUntrackedOrigin](unsafe_from_address=self.addr)
+        if p[].region != 0:
+            var gone = Int(p[].released)
+            _unmap(p[].region + gone, p[].size - gone)
         p.unsafe_deinit_pointee()
         p.unsafe_free()
 
@@ -207,11 +256,28 @@ struct Download(GzInput, Movable):
         """The first `n` bytes, `n` no more than `have()` returned."""
         if n == 0:
             return Span[UInt8, MutUntrackedOrigin]()
-        var at = Int(self._sh()[].buf.unsafe_ptr())
+        var at = self._sh()[].region
+        if at == 0:
+            at = Int(self._sh()[].buf.unsafe_ptr())
         return Span[UInt8, MutUntrackedOrigin](
             unsafe_ptr=Pointer[UInt8, MutUntrackedOrigin](unsafe_from_address=at),
             length=n,
         )
+
+    def release(self, upto: Int):
+        """The decoder is done with the first `upto` bytes (which have
+        arrived): give them back to the OS, a megabyte at a time, so an hour
+        holds the compressed input not yet decoded rather than all of it
+        (100-130 MB in 2023-2025). `view` must not be read below it again."""
+        var sh = self._sh()
+        if sh[].region == 0:
+            return
+        var to = min(upto, Int(_cell(sh[].have).load()))
+        to -= to % _RELEASE_STEP
+        var gone = Int(_cell(sh[].released).load())
+        if to > gone:
+            _unmap(sh[].region + gone, to - gone)
+            _cell(sh[].released).store(Int64(to))
 
     def wait(self, want: Int) raises -> Int:
         """Blocks until `want` bytes have arrived or all of them have;

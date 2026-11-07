@@ -7,6 +7,10 @@ on three real 50,000-row files at zstd 9 that is 7% smaller than (type,
 repository) and 18% smaller than the order the events arrive in
 (magmalake/mojo-census#28). The rows are the same rows; only their order in
 the file changes, and nothing reads that order.
+
+gharchive's hours sort with `eventrows.order_by_repo_type`, the same order
+over rows held in pieces (#37); this sorts a `RecordBatch` (the day's
+`gharchive.repo_hour`, `daymerge`).
 """
 
 from std.memory import unsafe_memcpy
