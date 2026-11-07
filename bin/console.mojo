@@ -292,6 +292,13 @@ def _nav(href: String, label: String, current: Bool) -> String:
 comptime BRAND = "Mojourney"
 comptime SUBTITLE = "the Mojo ecosystem census"
 comptime SITE_URL = "https://mojourney.dev"
+comptime FEEDBACK = "https://github.com/magmalake/mojo-census/issues"
+"""Where the footer's Feedback link goes."""
+comptime EDGE_CACHE = "public, max-age=60, s-maxage=1800"
+"""Cache-Control of a page or JSON answer: a minute in the browser, 30 minutes
+at Cloudflare's edge (the refresher's period; a cache rule for mojourney.dev
+must make HTML eligible for caching: README, "Edge caching"). The warming-up page
+is `no-store`."""
 
 comptime DESCRIPTION = (
     "Mojo repos, versions and growth, counted from GH Archive by"
@@ -331,11 +338,13 @@ def _page(
         " public GitHub events, the repositories with Mojo in them, and what their lock files",
         " say at each commit.</p>",
         "<nav><a href='https://mlake.dev' rel=noopener>mlake.dev</a>",
+        "<a href='", FEEDBACK, "' rel=noopener>Feedback</a>",
         "<a href='https://github.com/magmalake' rel=noopener>GitHub</a>",
         "<a href='/api/repos'>JSON</a></nav></div></footer>", HELP_JS, "</body></html>",
     )
     var resp = Response(status=200, reason="OK", body=List[UInt8](h.as_bytes()))
     resp.headers.set("Content-Type", "text/html; charset=utf-8")
+    resp.headers.set("Cache-Control", EDGE_CACHE)
     return resp^
 
 
@@ -2465,6 +2474,7 @@ def _warming_up() raises -> Response:
     resp.reason = "Service Unavailable"
     resp.headers.set("Retry-After", "5")
     resp.headers.set("Refresh", "5")
+    resp.headers.set("Cache-Control", "no-store")
     return resp^
 
 
@@ -2492,7 +2502,9 @@ struct Site(Handler, Copyable):
         var resp = self._route(req, c)
         var note = notice(runs.get()[])
         if note.byte_length() > 0:
-            return _with_notice(resp^, note)
+            resp = _with_notice(resp^, note)
+        if resp.status == 200:
+            resp.headers.set("Cache-Control", EDGE_CACHE)
         return resp^
 
     def _route(self, req: Request, c: Cache) raises -> Response:
