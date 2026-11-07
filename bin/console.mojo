@@ -46,7 +46,7 @@ from flare.net import SocketAddr
 from orca.civil import now
 from threads import OpaquePtr, ThreadHandle
 
-from charts import compact, donut, line_chart
+from charts import compact, donut, grid_line, line_chart
 from jscan import micros_to_iso
 from listing import (
     NEW_30D,
@@ -1433,7 +1433,7 @@ def _line_chart(
     for t in ticks:
         var y = up + ph - t * ph // top
         svg.write(
-            "<line class=grid x1=", left, " x2=", w - right, " y1=", y, " y2=", y, "/>",
+            grid_line(left, w - right, y),
             "<text x=", left - 6, " y=", y + 4, " text-anchor=end>", t, "</text>",
         )
     # X labels, thinned to about twelve.
