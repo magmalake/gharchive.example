@@ -249,6 +249,8 @@ def test_duplicate_repo_rows_keep_numbers_with_names() raises:
     # One library and one accumulator per name.
     assert_equal(len(libs), 3)
     assert_equal(len(b.accs), 3)
+    # The data checks' repos_unique compares these: four rows, three names.
+    assert_equal(b.repo_rows, 4)
     # Biggest first, unlike mojo.repos' order (small, big, mid).
     assert_equal(libs[0].repo, "o/big")
     assert_equal(libs[1].repo, "o/mid")
