@@ -15,6 +15,8 @@ from std.subprocess import run
 
 from dista import Seq
 
+from orca.proc import capture
+from retry import backoff_ms, env_int, log_retry, nap_ms
 from versions import lock_version, manifest_version, tooling
 
 
@@ -194,18 +196,109 @@ def is_mojo_file(path: StringSlice) -> Bool:
     return path.endswith(".mojo") or path.endswith(".🔥")
 
 
-def _sh(cmd: String) raises -> Tuple[Int, String]:
+def _sh(cmd: String, timeout_ms: Int = 0) raises -> Tuple[Int, String]:
     """Runs `cmd` with `sh`, and returns its exit status and its output, any
     bytes that aren't UTF-8 dropped: an old commit's author or path can be
-    Latin-1, and `run` refuses output that isn't UTF-8."""
-    var out = run(
-        String("{ ", cmd, '; echo "@@exit $?"; } | iconv -c -f UTF-8 -t UTF-8; true')
+    Latin-1, and `run` refuses output that isn't UTF-8. With `timeout_ms`
+    the command is killed once it has run that long, and the status is
+    `TIMED_OUT`."""
+    var wrapped = String(
+        "{ ", cmd, '; echo "@@exit $?"; } | iconv -c -f UTF-8 -t UTF-8; true'
     )
+    var out: String
+    if timeout_ms > 0:
+        # orca's `capture` runs it as the leader of a process group of its
+        # own and, past the timeout, kills the group: git and the
+        # `git-remote-https` and `index-pack` it started.
+        try:
+            out = capture(
+                ["/bin/sh", "-c", wrapped], Float64(timeout_ms) / 1000.0
+            )[1]
+        except e:
+            var msg = String(e)
+            if "took longer than" in msg:
+                msg = String("timed out after ", timeout_ms // 1000, " s")
+            return (TIMED_OUT, msg^)
+    else:
+        out = run(wrapped)
     var at = out.rfind("@@exit ")
     if at < 0:
         return (-1, out^)
     var status = Int(String(out[byte = at + 7 :]).strip())
     return (status, String(out[byte=:at]))
+
+
+comptime TIMED_OUT = 124
+"""`_sh`'s status for a command killed at its timeout (as `timeout(1)`)."""
+
+
+def git_timeout_ms() -> Int:
+    """`GIT_TIMEOUT_SECONDS` (default 600): how long one git command that
+    talks to GitHub may run before it is killed."""
+    return env_int("GIT_TIMEOUT_SECONDS", 600) * 1000
+
+
+def git_net() -> String:
+    """`git` for a command that talks to GitHub: no credential prompt, and
+    git's own stall detector, which aborts a transfer slower than
+    `GIT_LOW_SPEED_LIMIT` bytes a second (1000) for `GIT_LOW_SPEED_SECONDS`
+    (60), long before `GIT_TIMEOUT_SECONDS`. The `-c` settings reach the
+    fetches a blobless clone makes later, from `git show`, too."""
+    return String(
+        "GIT_TERMINAL_PROMPT=0 git -c http.lowSpeedLimit=",
+        env_int("GIT_LOW_SPEED_LIMIT", 1000),
+        " -c http.lowSpeedTime=", env_int("GIT_LOW_SPEED_SECONDS", 60),
+    )
+
+
+def transient_git_error(output: String) -> Bool:
+    """Whether a failed clone is worth trying again: everything but a
+    repository that is gone, private or blocked."""
+    var low = output.lower()
+    for p in [
+        "repository not found",
+        "could not read username",
+        "authentication failed",
+        "returned error: 403",
+        "returned error: 404",
+        "returned error: 451",
+        "access to this repository has been disabled",
+        "not a repository name",
+    ]:
+        if p in low:
+            return False
+    return True
+
+
+def git_clone(repo: String, dir: String, flags: String) raises -> Tuple[Int, String]:
+    """`git clone --quiet --bare <flags>` of `repo` from GitHub into `dir`,
+    each try killed after `git_timeout_ms()` and tried again, with
+    exponential backoff and jitter, up to `GIT_RETRIES` (default 3) more
+    times, unless it failed for good (`transient_git_error`). Returns the
+    last try's status and output (with the number of tries if it failed)."""
+    var tries = env_int("GIT_RETRIES", 3) + 1
+    var timeout = git_timeout_ms()
+    var attempt = 1
+    while True:
+        _ = _sh(String("mkdir -p '", _workdir(), "' && rm -rf '", dir, "'"))
+        var r = _sh(
+            String(
+                git_net(), " clone --quiet --bare", flags,
+                " https://github.com/", repo, ".git '", dir, "' 2>&1",
+            ),
+            timeout,
+        )
+        if r[0] == 0:
+            return r^
+        var err = String(r[1].strip())
+        if attempt >= tries or not transient_git_error(err):
+            if attempt > 1:
+                err = String(err, " (after ", attempt, " tries)")
+            return (r[0], err^)
+        var wait = backoff_ms(attempt - 1)
+        log_retry(String("git clone ", repo), attempt, tries, wait, err)
+        nap_ms(wait)
+        attempt += 1
 
 
 def _show(dir: String, sha: String, file: String) raises -> String:
@@ -414,11 +507,7 @@ def read_tags(repo: String) raises -> History:
         return out^
     var dir = _clone_dir(repo)
     try:
-        _ = _sh(String("mkdir -p '", _workdir(), "' && rm -rf '", dir, "'"))
-        var clone = _sh(String(
-            "GIT_TERMINAL_PROMPT=0 git clone --quiet --bare --filter=blob:none",
-            " https://github.com/", repo, ".git '", dir, "' 2>&1",
-        ))
+        var clone = git_clone(repo, dir, " --filter=blob:none")
         if clone[0] != 0:
             out.error = String("git clone failed: ", clone[1].strip())
         else:
@@ -450,15 +539,8 @@ def _read_history(repo: String, mut out: History) raises:
     if not safe_repo(repo):
         out.error = String("not a repository name: ", repo)
         return
-    var base = _workdir()
     var dir = _clone_dir(repo)
-    _ = _sh(String("mkdir -p '", base, "' && rm -rf '", dir, "'"))
-    var clone = _sh(
-        String(
-            "GIT_TERMINAL_PROMPT=0 git clone --quiet --bare https://github.com/",
-            repo, ".git '", dir, "' 2>&1",
-        )
-    )
+    var clone = git_clone(repo, dir, "")
     if clone[0] != 0:
         out.error = String("git clone failed: ", clone[1].strip())
         _ = _sh(String("rm -rf '", dir, "'"))

@@ -1,6 +1,9 @@
 """HTTP: GH Archive files, and GitHub's REST API and raw files.
 
-Uses flare's blocking `HttpClient`. GitHub calls send `GITHUB_TOKEN` when it
+Uses flare's blocking `HttpClient`, with a read timeout as well as the
+connect timeout: without one a stalled connection blocks a read forever
+(#49). `Download`, GH Archive's, also retries and resumes (`HttpSettings`,
+`retry`). GitHub calls send `GITHUB_TOKEN` when it
 is set (orca gives runs the secret registered with `--secret`); without it
 the REST API allows 60 requests an hour, which is enough for a local run.
 """
@@ -16,6 +19,7 @@ from std.time import perf_counter_ns, sleep
 from flare.http import HttpClient, HttpStreamResponse, Request, Response
 from flare.tls import TlsConfig
 from gzstream import GzInput
+from retry import backoff_ms, env_int, log_retry, now_ms, retryable_status
 from threads import AtomicCounter, OpaquePtr, ThreadHandle, opaque_ptr
 
 comptime USER_AGENT = "mojo-census (magmalake)"
@@ -39,13 +43,42 @@ def _ca_bundle() -> String:
     return String()
 
 
-def _client(timeout_ms: Int = 120_000) raises -> HttpClient:
+def _client(timeout_ms: Int = 30_000, idle_ms: Int = 60_000) raises -> HttpClient:
     """A new blocking client for one call: each call makes its own, so none
-    is shared between threads."""
+    is shared between threads. `timeout_ms` bounds the connect and the TLS
+    handshake; `idle_ms` (0 for none) each read, so a connection that goes
+    quiet raises `Timeout` instead of blocking forever. flare's `timeout_ms`
+    alone never reaches a read (magmalake/mojo-census#49)."""
     var ca = _ca_bundle()
-    if ca:
-        return HttpClient(TlsConfig(ca_bundle=ca), timeout_ms=timeout_ms)
-    return HttpClient(timeout_ms=timeout_ms)
+    var c = HttpClient(TlsConfig(ca_bundle=ca), timeout_ms=timeout_ms) if ca else HttpClient(timeout_ms=timeout_ms)
+    if idle_ms > 0:
+        return c^.with_read_timeout(idle_ms)
+    return c^
+
+
+@fieldwise_init
+struct HttpSettings(ImplicitlyCopyable, Movable):
+    """Timeouts and retries of a download, in milliseconds (`retry` says
+    what each one bounds and their defaults)."""
+
+    var connect_ms: Int
+    var idle_ms: Int
+    var deadline_ms: Int
+    """The whole download, every try and wait included, but not the time
+    the reader spends held back by a slow consumer (`_AHEAD`)."""
+    var retries: Int
+    """Tries after the first."""
+
+    @staticmethod
+    def gharchive() -> Self:
+        """From `GHARCHIVE_CONNECT_SECONDS`, `GHARCHIVE_IDLE_SECONDS`,
+        `GHARCHIVE_TIMEOUT_SECONDS` and `GHARCHIVE_RETRIES`."""
+        return Self(
+            env_int("GHARCHIVE_CONNECT_SECONDS", 20) * 1000,
+            env_int("GHARCHIVE_IDLE_SECONDS", 30) * 1000,
+            env_int("GHARCHIVE_TIMEOUT_SECONDS", 900) * 1000,
+            env_int("GHARCHIVE_RETRIES", 4),
+        )
 
 
 def get_bytes(url: String, timeout_ms: Int = 600_000) raises -> List[UInt8]:
@@ -90,6 +123,151 @@ def _unmap(addr: Int, size: Int):
         _ = external_call["munmap", Int32](addr, size)
 
 
+struct _Conn(Movable):
+    """One request's client and its streaming response (the response reads
+    through the client's connection, so the two go together)."""
+
+    var client: HttpClient
+    var resp: HttpStreamResponse
+
+    def __init__(out self, var client: HttpClient, var resp: HttpStreamResponse):
+        self.client = client^
+        self.resp = resp^
+
+
+def _stopping(stop: Int) -> Bool:
+    """Whether the `Download` holding the state cell at `stop` (0: none) is
+    being dropped."""
+    if stop == 0:
+        return False
+    return AtomicCounter.at(stop).load() == 3
+
+
+def _retry_wait(
+    url: String,
+    s: HttpSettings,
+    tries: Int,
+    deadline: Int,
+    err: String,
+    retry_after_s: Int,
+    stop: Int,
+) raises:
+    """After a failed try (`tries` made so far): raises if no tries or time
+    are left, else logs the retry and waits for it (exponential backoff with
+    jitter, or `Retry-After`), returning early if the download is dropped."""
+    if tries > s.retries:
+        raise Error("GET ", url, ": ", err, " (gave up after ", tries, " tries)")
+    var wait = backoff_ms(tries - 1)
+    if retry_after_s > 0:
+        wait = retry_after_s * 1000
+    if now_ms() + wait > deadline:
+        raise Error(
+            "GET ", url, ": ", err, " (", tries, " tries; no time left in its ",
+            s.deadline_ms // 1000, " s deadline)",
+        )
+    log_retry(String("GET ", url), tries, s.retries + 1, wait, err)
+    var until = now_ms() + wait
+    while now_ms() < until:
+        if _stopping(stop):
+            return
+        sleep(0.05)
+
+
+def _content_range(v: String) -> Tuple[Int, Int]:
+    """`bytes A-B/T` as (A, T), or (-1, -1)."""
+    try:
+        if not v.startswith("bytes "):
+            return (-1, -1)
+        var dash = v.find("-")
+        var slash = v.find("/")
+        if dash < 0 or slash < dash:
+            return (-1, -1)
+        return (
+            Int(String(v[byte=6:dash]).strip()),
+            Int(String(v[byte = slash + 1 :]).strip()),
+        )
+    except:
+        return (-1, -1)
+
+
+def _open(
+    url: String,
+    offset: Int,
+    size: Int,
+    s: HttpSettings,
+    mut tries: Int,
+    deadline: Int,
+    stop: Int,
+) raises -> _Conn:
+    """A GET of `url` from byte `offset` on (`Range`; the whole body when
+    0), retried on a connect or read failure, a timeout, 408, 429 and 5xx
+    until it answers 200 (206 for a range) or the tries or the deadline run
+    out; any other status raises at once (a 404 is an hour GH Archive hasn't
+    published). A server that ignores the range and sends all `size` bytes
+    again is read past the first `offset`. `tries` counts every try of the
+    download, so the budget is the whole download's, not one request's."""
+    while True:
+        tries += 1
+        var final = False
+        var err: String
+        var retry_after = -1
+        try:
+            var c = _client(s.connect_ms, s.idle_ms)
+            var req = Request(method="GET", url=url)
+            req.headers.set("User-Agent", USER_AGENT)
+            if offset > 0:
+                req.headers.set("Range", String("bytes=", offset, "-"))
+            var resp = c.send_streaming(req^)
+            var st = resp.status
+            if st == 200 or (st == 206 and offset > 0):
+                var conn = _Conn(c^, resp^)
+                if offset > 0 and st == 206:
+                    var cr = _content_range(conn.resp.header("content-range"))
+                    if cr[0] != offset or cr[1] != size:
+                        final = True
+                        raise Error(
+                            "asked for bytes ", offset, "- of ", size,
+                            " and got ", conn.resp.header("content-range"),
+                        )
+                elif offset > 0:
+                    # The range was ignored: the same body from the start.
+                    var cl = conn.resp.header("content-length")
+                    if cl and Int(cl) != size:
+                        final = True
+                        raise Error(
+                            "the body changed size from ", size, " to ", cl,
+                            " between tries",
+                        )
+                    var skip = offset
+                    while skip > 0:
+                        var chunk = conn.resp.read_chunk(min(skip, 1 << 20))
+                        if len(chunk) == 0:
+                            raise Error("the body ended at ", offset - skip, " bytes")
+                        skip -= len(chunk)
+                    if skip < 0:
+                        final = True
+                        raise Error("read past the resume point")
+                return conn^
+            err = String("HTTP ", st)
+            if st == 429 or st == 503:
+                var ra = resp.header("retry-after")
+                if ra:
+                    try:
+                        retry_after = Int(ra)
+                    except:
+                        pass
+            if not retryable_status(st):
+                final = True
+                raise Error(err)
+        except e:
+            if final:
+                raise Error("GET ", url, ": ", e)
+            err = String(e)
+        _retry_wait(url, s, tries, deadline, err, retry_after, stop)
+        if _stopping(stop):
+            raise Error("GET ", url, ": dropped")
+
+
 struct _Shared(Movable):
     """What a download's reader thread and its consumer share. The reader
     writes the body, then publishes progress through `have` and `state` with
@@ -97,10 +275,18 @@ struct _Shared(Movable):
     `Content-Length` the body goes into `region`, mapped to its full size up
     front so it doesn't move while the reader runs, and the consumer unmaps
     what it is done with (`released`), so the body is never all resident at
-    once (#37); without one, into `buf`."""
+    once (#37); without one, into `buf`. A connection that fails mid-body is
+    opened again from where it stopped (`_open`), so the consumer sees one
+    body whatever happened underneath."""
 
-    var client: HttpClient
-    var resp: HttpStreamResponse
+    var conn: _Conn
+    var url: String
+    var settings: HttpSettings
+    var tries: Int
+    """Tries so far, the first request's included."""
+    var deadline: Int
+    """`now_ms()` past which the download fails; moved on by the time the
+    reader is held back for the consumer."""
     var size: Int
     """`Content-Length`, or -1."""
     var buf: List[UInt8]
@@ -118,10 +304,19 @@ struct _Shared(Movable):
     var ms: Int64
 
     def __init__(
-        out self, var client: HttpClient, var resp: HttpStreamResponse, size: Int
+        out self,
+        var conn: _Conn,
+        url: String,
+        settings: HttpSettings,
+        tries: Int,
+        deadline: Int,
+        size: Int,
     ):
-        self.client = client^
-        self.resp = resp^
+        self.conn = conn^
+        self.url = url
+        self.settings = settings
+        self.tries = tries
+        self.deadline = deadline
         self.size = size
         self.buf = List[UInt8]()
         self.region = 0
@@ -138,19 +333,48 @@ def _cell(ref v: Int64) -> AtomicCounter:
     return AtomicCounter.at(Int(Pointer(to=v)))
 
 
+def _past_deadline(sh: Pointer[_Shared, MutUntrackedOrigin], at: Int) raises:
+    if now_ms() > sh[].deadline:
+        raise Error(
+            "no end to the body after its ", sh[].settings.deadline_ms // 1000,
+            " s deadline (", at, " bytes in, ", sh[].tries, " tries)",
+        )
+
+
 def _pull(arg: OpaquePtr) -> OpaquePtr:
     """The reader thread: the body into `region`, publishing `have` as it
     goes and staying within `_AHEAD` of what the consumer released. With no
-    `Content-Length` it reads it all into `buf`, then publishes."""
+    `Content-Length` it reads it all into `buf`, then publishes. A read
+    that fails (a reset, an idle timeout, a body cut short) opens the
+    connection again from the byte it stopped at, within the tries and the
+    deadline the download has left."""
     var sh = Pointer[_Shared, MutUntrackedOrigin](unsafe_from_address=Int(arg))
+    var stop = Int(Pointer(to=sh[].state))
     var t0 = perf_counter_ns()
     try:
         # No `Content-Length` (chunked): the buffer can't be sized up front,
-        # so the body is gathered and published all at once.
+        # so the body is gathered and published all at once; a failure
+        # starts it again from the beginning.
         if sh[].size < 0:
             var all = List[UInt8]()
             while True:
-                var chunk = sh[].resp.read_chunk(1 << 20)
+                if _cell(sh[].state).load() == 3:
+                    return arg
+                _past_deadline(sh, len(all))
+                var chunk: List[UInt8]
+                try:
+                    chunk = sh[].conn.resp.read_chunk(1 << 20)
+                except e:
+                    _retry_wait(
+                        sh[].url, sh[].settings, sh[].tries, sh[].deadline,
+                        String(e), -1, stop,
+                    )
+                    all.clear()
+                    sh[].conn = _open(
+                        sh[].url, 0, -1, sh[].settings, sh[].tries,
+                        sh[].deadline, stop,
+                    )
+                    continue
                 if len(chunk) == 0:
                     break
                 all.extend(Span(chunk))
@@ -168,9 +392,31 @@ def _pull(arg: OpaquePtr) -> OpaquePtr:
                 if _cell(sh[].state).load() == 3:
                     return arg
                 if at - Int(_cell(sh[].released).load()) >= _AHEAD:
+                    # Held back by the consumer, not the network: the
+                    # deadline moves on by the wait.
+                    var w0 = now_ms()
                     sleep(0.001)
+                    sh[].deadline += now_ms() - w0
                     continue
-                var chunk = sh[].resp.read_chunk(1 << 20)
+                _past_deadline(sh, at)
+                var chunk: List[UInt8]
+                try:
+                    chunk = sh[].conn.resp.read_chunk(1 << 20)
+                    if len(chunk) == 0 and at != sh[].size:
+                        raise Error(
+                            "the body ended at ", at, " of its ", sh[].size,
+                            " bytes",
+                        )
+                except e:
+                    _retry_wait(
+                        sh[].url, sh[].settings, sh[].tries, sh[].deadline,
+                        String(e), -1, stop,
+                    )
+                    sh[].conn = _open(
+                        sh[].url, at, sh[].size, sh[].settings, sh[].tries,
+                        sh[].deadline, stop,
+                    )
+                    continue
                 if len(chunk) == 0:
                     break
                 if at + len(chunk) > sh[].size:
@@ -182,10 +428,6 @@ def _pull(arg: OpaquePtr) -> OpaquePtr:
                 )
                 at += len(chunk)
                 _cell(sh[].have).store(Int64(at))
-            if at != sh[].size:
-                raise Error(
-                    "the body ended at ", at, " of its ", sh[].size, " bytes"
-                )
         sh[].ms = Int64(Int(perf_counter_ns() - t0) // 1_000_000)
         _cell(sh[].state).store(1)
     except e:
@@ -200,31 +442,35 @@ struct Download(GzInput, Movable):
     is what lets an hour task gunzip and parse while the hour is still
     downloading (about 100 MB of gzip), so its time is roughly the longer of
     the two, not their sum, while holding only the part not yet decoded
-    (`release`)."""
+    (`release`). Its timeouts and retries are `HttpSettings`: a stalled or
+    reset connection is retried (from where it stopped), and the download
+    fails, rather than hangs, once they run out."""
 
     var addr: Int
     """The heap `_Shared`, by address: the reader thread holds it too."""
     var thread: ThreadHandle
     var url: String
 
-    def __init__(out self, url: String, timeout_ms: Int = 600_000) raises:
-        """Sends the request and starts the reader thread; raises on any
-        status but 200. The body is not read yet."""
-        var c = _client(timeout_ms)
-        var req = Request(method="GET", url=url)
-        req.headers.set("User-Agent", USER_AGENT)
-        var resp = c.send_streaming(req^)
-        if resp.status != 200:
-            raise Error("GET ", url, ": HTTP ", resp.status)
+    def __init__(out self, url: String) raises:
+        """`HttpSettings.gharchive()`'s download of `url`."""
+        self = Self(url, HttpSettings.gharchive())
+
+    def __init__(out self, url: String, settings: HttpSettings) raises:
+        """Sends the request (with its retries) and starts the reader
+        thread; raises on a final status (404, any 4xx but 408 and 429) or
+        once the tries run out. The body is not read yet."""
+        var tries = 0
+        var deadline = now_ms() + settings.deadline_ms
+        var conn = _open(url, 0, -1, settings, tries, deadline, 0)
         var size = -1
-        var cl = resp.header("content-length")
+        var cl = conn.resp.header("content-length")
         if cl:
             try:
                 size = Int(cl)
             except:
                 size = -1
         var p = unsafe_alloc[_Shared](1)
-        p.unsafe_write(_Shared(c^, resp^, size))
+        p.unsafe_write(_Shared(conn^, url, settings, tries, deadline, size))
         if size > 0:
             p[].region = _map(size)
         self.addr = Int(p)
