@@ -1,0 +1,48 @@
+# How the census's pipelines run under orca. `orca register` (no arguments) in
+# the scheduler container reads this file: the image has it at
+# /opt/orca/orca.toml (ORCA_CONFIG) and the binaries at /opt/orca/pipelines.
+# To change a setting: edit this file, merge, deploy the new image, register
+# again. magmalake/orca.mojo docs/orca-toml.md and docs/hetzner.md say more.
+
+[defaults]
+# One run of a pipeline at a time, until iceberg-mojo 0.11.1 is pinned
+# everywhere (magmalake/orca.mojo#164: concurrent commits to one table).
+max_runs = 1
+
+[pipelines.gharchive]
+# Fill the whole range (from the first partition to yesterday) by itself,
+# oldest day first, one fill run at a time on top of max_runs.
+fills = "all"
+fill_order = "oldest"
+fill_max_runs = 1
+# DISTA_WORKER_SLOTS: dista workers in one process. GHARCHIVE_PARALLEL: hours
+# in flight at once; its default of 16 is sized for four AWS instances. On the
+# CAX21 (4 vCPU, 8 GB), 16 hit 99.6% memory and the kernel killed workers, and
+# 3 peaked near 7 GB and swapped hard: an hour in flight can take 2 GB or more
+# (#37). 2 and 2 peak under 2 GB and run a day in about 3.5 minutes. Raise both
+# on a bigger server (on the CAX41 try 8 and 8; edit, deploy, register), then
+# back to 2 and 2.
+env = { DISTA_WORKER_SLOTS = "2", GHARCHIVE_PARALLEL = "2" }
+
+[pipelines.gharchive_index]
+env = { DISTA_WORKER_SLOTS = "3" }
+
+[pipelines.mojo_repos]
+# With a token mojo_repos checks 1000 candidates a run, 25 without.
+secrets = { GITHUB_TOKEN = "orca/github-token" }
+
+[pipelines.mojo_history]
+env = { DISTA_WORKER_SLOTS = "3" }
+
+[pipelines.mojo_versions]
+# Blobless clones of the repositories whose version is unknown, one dista
+# task each; no GitHub API, so no token.
+env = { DISTA_WORKER_SLOTS = "3" }
+
+[pipelines.mojo_activity]
+env = { DISTA_WORKER_SLOTS = "3" }
+
+# Mondays at 06:00 UTC; one GET /repos/{owner}/{repo} per repository, which
+# unauthenticated is 60 an hour.
+[pipelines.mojo_stats]
+secrets = { GITHUB_TOKEN = "orca/github-token" }

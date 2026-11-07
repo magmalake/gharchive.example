@@ -71,6 +71,14 @@ COPY --from=build /src/project/.pixi/envs/default/ssl /src/project/.pixi/envs/de
 # gharchive's fetch hands flare $CONDA_PREFIX/ssl/cacert.pem, and
 # CONDA_PREFIX is /opt/orca here.
 COPY --from=build /src/project/.pixi/envs/default/ssl /opt/orca/ssl
+# The census's settings, and what `orca register` (no arguments) reads: every
+# pipeline in orca.toml, from ORCA_PIPELINES_DIR, with the commit and source
+# these were built from.
+COPY --from=build /src/project/orca.toml /opt/orca/orca.toml
+ARG ORCA_SOURCE=""
+ARG ORCA_COMMIT=""
+ENV ORCA_CONFIG=/opt/orca/orca.toml ORCA_PIPELINES_DIR=/opt/orca/pipelines \
+    ORCA_SOURCE=${ORCA_SOURCE} ORCA_COMMIT=${ORCA_COMMIT}
 ENV CONDA_PREFIX=/opt/orca LD_LIBRARY_PATH=/opt/orca/lib PATH=/opt/orca/bin:/opt/orca/pipelines:/usr/bin:/bin \
     LLVM_SYMBOLIZER_PATH=/opt/orca/libexec/llvm-symbolizer
 ENTRYPOINT ["/opt/orca/bin/orca"]
