@@ -15,13 +15,14 @@ max_runs = 1
 fills = "all"
 fill_order = "oldest"
 fill_max_runs = 1
-# DISTA_WORKER_SLOTS: dista workers in one process, 3 on the CAX21 (4 vCPU,
-# 8 GB). GHARCHIVE_PARALLEL: hours in flight at once; its default of 16 is
-# sized for four AWS instances, and an hour in flight takes about 1 GB
-# (processes of 2 to 4.4 GB), so 16 took the CAX21 to 99.6% memory and OOM.
-# Raise both on a bigger server (an import on the CAX41: 14 and 14; edit,
-# deploy, register), then back to 3 and 3.
-env = { DISTA_WORKER_SLOTS = "3", GHARCHIVE_PARALLEL = "3" }
+# DISTA_WORKER_SLOTS: dista workers in one process. GHARCHIVE_PARALLEL: hours
+# in flight at once; its default of 16 is sized for four AWS instances. On the
+# CAX21 (4 vCPU, 8 GB), 16 hit 99.6% memory and the kernel killed workers, and
+# 3 peaked near 7 GB and swapped hard: an hour in flight can take 2 GB or more
+# (#37). 2 and 2 peak under 2 GB and run a day in about 3.5 minutes. Raise both
+# on a bigger server (on the CAX41 try 8 and 8; edit, deploy, register), then
+# back to 2 and 2.
+env = { DISTA_WORKER_SLOTS = "2", GHARCHIVE_PARALLEL = "2" }
 
 [pipelines.gharchive_index]
 env = { DISTA_WORKER_SLOTS = "3" }
