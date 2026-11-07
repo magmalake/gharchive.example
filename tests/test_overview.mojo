@@ -310,5 +310,30 @@ def test_donut_and_line() raises:
     assert_true("2025-01" in line)
 
 
+def test_add_repo_twice_and_recent() raises:
+    """A name added twice keeps one accumulator; `recent` follows the names
+    asked for, not the order they were added in."""
+    var b = Builder(days_from_civil(2026, 11, 15))
+    var a = b.add_repo("o/a")
+    var z = b.add_repo("o/z")
+    assert_equal(b.add_repo("o/a"), a)
+    assert_equal(len(b.accs), 2)
+    assert_equal(b.id_of("o/z"), z)
+    assert_equal(b.id_of("o/none"), -1)
+    b.add_commit(a, _us(2026, 11, 1), 0, 5, 2, "")
+    b.add_commit(z, _us(2026, 1, 1), 0, 100, 2, "")
+    b.add_commit(z, _us(2026, 11, 2), 1, 130, 2, "")
+    b.add_commit(z, _us(2026, 11, 3), 2, 140, 2, "")
+    var names: List[String] = ["o/z", "o/none", "o/a"]
+    var r = b.recent(names)
+    assert_equal(len(r.commits30), 3)
+    assert_equal(r.commits30[0], 2)
+    assert_equal(r.lines_delta[0], 40)
+    assert_equal(r.commits30[1], 0)
+    assert_equal(r.lines_delta[1], 0)
+    assert_equal(r.commits30[2], 1)
+    assert_equal(r.lines_delta[2], 5)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

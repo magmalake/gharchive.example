@@ -24,7 +24,7 @@ from lake import (
     ts_or_null,
 )
 from model import libraries
-from overview import Builder
+from overview import Builder, top_gains
 
 comptime REPOS_NO_TOPICS = (
     '{"schema-id":0,"type":"struct","fields":['
@@ -47,7 +47,9 @@ def _us(day: String) raises -> Int64:
     return days_of(day) * 86_400_000_000
 
 
-def _repos(names: List[String]) raises -> List[ColumnBuilder]:
+def _repos(
+    names: List[String], first_seen: String = "2025-01-01", description: String = ""
+) raises -> List[ColumnBuilder]:
     var s = Schema.parse(REPOS_NO_TOPICS)
     var cs = List[ColumnBuilder]()
     for i in range(12):
@@ -55,13 +57,13 @@ def _repos(names: List[String]) raises -> List[ColumnBuilder]:
     for n in names:
         cs[0].add(Datum.string_(n))
         cs[1].add(ts(_us("2023-06-01")))
-        cs[2].add(ts(_us("2025-01-01")))
+        cs[2].add(ts(_us(first_seen)))
         cs[3].add(Datum.string_("test"))
         cs[4].add(Datum.long_(1))
         cs[5].add(Datum.long_(0))
         cs[6].add(Datum.none())
         cs[7].add(Datum.none())
-        cs[8].add(Datum.none())
+        cs[8].add(str_or_null(description))
         cs[9].add(Datum.long_(10))
         cs[10].add(Datum.string_("Mojo"))
         cs[11].add(Datum.bool_(False))
@@ -168,6 +170,88 @@ def test_libraries_with_head_versions() raises:
     assert_equal(ov.est_buckets[0], "pre-1.0")
     assert_equal(ov.est_bucket_repos[0], 3)
     assert_equal(len(ov.est_buckets), 3)
+    _ = run(String("rm -rf '", dir, "'"))
+
+
+def _commit(mut c: List[ColumnBuilder], repo: String, day: String, seq: Int, lines: Int) raises:
+    c[0].add(Datum.string_(repo))
+    c[1].add(Datum.string_(String(repo, "-", seq)))
+    c[2].add(ts(_us(day)))
+    c[3].add(Datum.long_(Int64(seq)))
+    c[4].add(Datum.long_(Int64(lines)))
+    c[5].add(Datum.long_(1))
+    c[6].add(Datum.string_("pixi"))
+    c[7].add(Datum.none())
+    c[8].add(Datum.none())
+
+
+def test_duplicate_repo_rows_keep_numbers_with_names() raises:
+    """The table mojo.repos names o/small twice (a second run appended it
+    again) and lists the repos in another order than the console's biggest
+    first: each repo's commits and lines in the last 30 days stay with its
+    name."""
+    var dir = String(getenv("TMPDIR", "/tmp"), "/census-test-dups-", perf_counter_ns())
+    var cat = FilesystemCatalog.local(dir)
+    var repos_t = cat.create_table("mojo", "repos", Schema.parse(REPOS_NO_TOPICS))
+    var commits_t = cat.create_table("mojo", "commits", commits_schema())
+    var first: List[String] = ["o/small", "o/big"]
+    _ = repos_t.append([batch_of(_repos(first, "2025-01-01", "the first row"))])
+    var again: List[String] = ["o/small", "o/mid"]
+    _ = repos_t.append([batch_of(_repos(again, "2025-06-01", "a later row"))])
+
+    var cs = commits_schema()
+    var c = List[ColumnBuilder]()
+    for i in range(9):
+        c.append(ColumnBuilder.of(cs, i + 1))
+    # Today is 2026-11-05; 30 days ago is 2026-10-06.
+    # o/small: three commits this month, 10 lines now.
+    _commit(c, "o/small", "2026-10-20", 0, 4)
+    _commit(c, "o/small", "2026-10-25", 1, 8)
+    _commit(c, "o/small", "2026-11-01", 2, 10)
+    # o/big: 500 lines in 2024, 1000 now after one commit this month.
+    _commit(c, "o/big", "2024-03-01", 0, 500)
+    _commit(c, "o/big", "2026-11-02", 1, 1000)
+    # o/mid: nothing recent, 100 lines.
+    _commit(c, "o/mid", "2025-07-01", 0, 100)
+    _ = commits_t.append([batch_of(c)])
+
+    _ = setenv("ORCA_WAREHOUSE", dir)
+    var b = Builder(Int(days_of("2026-11-05")))
+    var libs = libraries(b)
+    # One library and one accumulator per name.
+    assert_equal(len(libs), 3)
+    assert_equal(len(b.accs), 3)
+    # Biggest first, unlike mojo.repos' order (small, big, mid).
+    assert_equal(libs[0].repo, "o/big")
+    assert_equal(libs[1].repo, "o/mid")
+    assert_equal(libs[2].repo, "o/small")
+    # o/small keeps its earliest row, and its commits are counted once.
+    assert_equal(libs[2].description, "the first row")
+    assert_equal(libs[2].first_seen, _us("2025-01-01"))
+    assert_equal(libs[2].commits, 3)
+    assert_equal(libs[2].mojo_lines, 10)
+
+    # What the console's Most active and the Repos table's commits30 use.
+    var names = List[String]()
+    for ref l in libs:
+        names.append(l.repo)
+    var r = b.recent(names)
+    assert_equal(r.commits30[0], 1)  # o/big
+    assert_equal(r.lines_delta[0], 500)
+    assert_equal(r.commits30[1], 0)  # o/mid
+    assert_equal(r.lines_delta[1], 0)
+    assert_equal(r.commits30[2], 3)  # o/small
+    assert_equal(r.lines_delta[2], 10)
+    var top = top_gains(r.commits30, 10)
+    assert_equal(len(top), 2)
+    assert_equal(libs[top[0]].repo, "o/small")
+    assert_equal(libs[top[1]].repo, "o/big")
+
+    var ov = b.finish(len(libs))
+    assert_equal(ov.with_history, 3)
+    assert_equal(ov.commits, 6)
+    assert_equal(ov.commits_30, 4)
+    assert_equal(ov.lines, 1110)
     _ = run(String("rm -rf '", dir, "'"))
 
 
