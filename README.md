@@ -337,6 +337,27 @@ server registering is `docker exec scheduler orca register` (orca after
 0.10.0). To change a setting: edit `orca.toml`, merge, deploy the new image,
 register again. `mojo_retool` is a one-off and isn't in the file.
 
+### Analytics
+
+With `POSTHOG_KEY` set to a PostHog project key (`phc_...`, a public
+client-side key), every console page's `<head>` loads PostHog the way the
+magmalake.org website does: `array.js` and the events go through `/ph` on
+the page's own origin, with memory-only persistence (no cookies, no
+`localStorage`, so no consent banner), and `site: "mojourney"` registered on
+every event (orca's UI sends `site: "orca"`), so one PostHog project can hold
+both sites. If the key is unset or not a `phc_` key, the snippet is left out
+(`src/analytics.mojo`). The console doesn't serve `/ph`: on mojourney.dev
+the `mojourney-ph` Cloudflare Worker in magmalake/magmalake.org does
+(`npx wrangler deploy -c worker/mojourney-ph/wrangler.jsonc`).
+
+On the Hetzner server the console is an orca-stack app, which gets its
+environment from `/etc/orca/app.env`. That file is written from
+`settings.env` and carries `ORCA_POSTHOG_KEY` across as `POSTHOG_KEY`
+(orca.mojo's `deploy/hetzner`, after orca 0.12.0). So set `POSTHOG_KEY=phc_...`
+in `hetzner.env` and run `./up.sh`, or add `ORCA_POSTHOG_KEY=phc_...` to
+`/etc/orca/settings.env` and run `orca-stack apply`. The same key also turns
+on orca's UI. Locally: `POSTHOG_KEY=phc_... PORT=8080 pixi run ./build/console`.
+
 ### What a local run produced
 
 On 2024-06-12, hours 15 and 17: 476,227 events (154 MB of Parquet), 23
