@@ -337,6 +337,20 @@ server registering is `docker exec scheduler orca register` (orca after
 0.10.0). To change a setting: edit `orca.toml`, merge, deploy the new image,
 register again. `mojo_retool` is a one-off and isn't in the file.
 
+### Edge caching
+
+The console answers pages and JSON with `Cache-Control: public, max-age=60,
+s-maxage=1800` (the warming-up page with `no-store`): a minute in the
+browser, 30 minutes at Cloudflare, the refresher's period. The tunnel's
+traffic goes through Cloudflare's proxy, but by default Cloudflare caches only
+static file types, never HTML (`cf-cache-status: DYNAMIC`), so mojourney.dev
+needs a cache rule: Caching → Cache Rules → hostname equals `mojourney.dev`,
+Cache eligibility "Eligible for cache", Edge TTL "Use cache-control header if
+present". Check with `curl -sI https://mojourney.dev/ | grep cf-cache` (`MISS`,
+then `HIT`). PostHog keeps working: the snippet runs in the browser, and the
+`mojourney-ph` Worker serves `/ph` ahead of the cache. Don't add the rule for
+orca.mojourney.dev: its pages are live and some are behind a login.
+
 ### Analytics
 
 With `POSTHOG_KEY` set to a PostHog project key (`phc_...`, a public
