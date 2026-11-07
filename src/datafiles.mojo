@@ -6,15 +6,23 @@ carries as a `Codec`), which the step commits as one append
 (`orca.tables.append_files`).
 """
 
+from std.os import getenv
 from std.time import perf_counter_ns
 
 from iceberg.catalog.filesystem import Table
 from orca.tables import DataFiles as FileEntries
 from orca.tables import FileWriter
-from parquet import RecordBatch
+from threads import num_cpus
 
+from eventrows import (
+    GROUP_BYTES,
+    EventRows,
+    FileTarget,
+    arrival_order,
+    order_by_repo_type,
+    write_event_files,
+)
 from hourindex import IndexFiles
-from sortrows import sorted_by_text
 
 
 struct DataFiles(Copyable, Movable):
@@ -53,60 +61,103 @@ struct DataFiles(Copyable, Movable):
         self.index_ms = 0
 
 
-trait BatchSink:
-    """Where `parse_gz` puts each batch as it fills: a table writer in the
-    hour task, a plain list in tests."""
+def write_threads() raises -> Int:
+    """Threads that encode an hour's pages: `GHARCHIVE_WRITE_THREADS`, else
+    the cores shared among the hours this worker runs at once
+    (`DISTA_WORKER_SLOTS`, default 1; 0 is one per core). Each thread holds
+    a zstd 9 context, about 36 MB, and threads beyond the cores only add
+    those: on 4 vCPUs at 4 hours in flight, one thread an hour ran a day in
+    39 s and 1.8 GB, four in 46 s and 2.1 GB (#37)."""
+    var given = getenv("GHARCHIVE_WRITE_THREADS")
+    if given:
+        return max(1, Int(given))
+    var slots = Int(getenv("DISTA_WORKER_SLOTS", "1"))
+    if slots <= 0:
+        return 1
+    return max(1, num_cpus() // slots)
 
-    def put(mut self, var batch: RecordBatch) raises:
+
+trait BatchSink:
+    """Where `decode_index` puts each file's worth of rows as it fills."""
+
+    def put(mut self, var rows: EventRows) raises:
         ...
 
 
 struct TableWriter(BatchSink, Movable):
-    """Writes batches into a table's data files as they come, uncommitted
-    (an `orca.tables.FileWriter`), and keeps their entries and the time."""
+    """Writes each file's worth of rows into the table's data files as it
+    comes, uncommitted, sorted by (repo, type) (see `sortrows`) or in the
+    order the rows arrived, and keeps their entries and the time.
 
-    var writer: FileWriter
+    A file is written a row group of `eventrows.GROUP_BYTES` at a time
+    (`eventrows.write_event_files`), so the rows are never copied whole."""
+
+    var target: FileTarget
+    var files: FileEntries
+    var rows: Int
     var write_ns: Int
     var sort_ns: Int
-    var sort_first: String
-    var sort_second: String
-    """The string columns each batch's rows are put in the order of before it
-    is written (see `sortrows`); empty for the order they arrived in."""
+    var sorted: Bool
+    var group_bytes: Int
+
+    def __init__(out self, table: Table, sorted: Bool = True) raises:
+        var w = FileWriter(table)
+        # 4 MB pages: the JSON column's 20% growth at the 1 MB default is 4%
+        # at 4 MB.
+        w.options.num_workers = write_threads()
+        if "write.parquet.page-size-bytes" not in table.metadata.properties:
+            w.options.page_size = 4 * 1024 * 1024
+        self = Self(
+            FileTarget(
+                w.io.copy(),
+                w.location,
+                w.schema.copy(),
+                w.spec.copy(),
+                w.sort_order_id,
+                w.options.copy(),
+            ),
+            sorted,
+        )
 
     def __init__(
         out self,
-        table: Table,
-        sort_first: String = "",
-        sort_second: String = "",
-    ) raises:
-        self.writer = FileWriter(table)
-        # One thread per core encodes each file's pages. 4 MB pages: the
-        # JSON column's 20% growth at the 1 MB default is 4% at 4 MB.
-        self.writer.options.num_workers = 0
-        if "write.parquet.page-size-bytes" not in table.metadata.properties:
-            self.writer.options.page_size = 4 * 1024 * 1024
+        var target: FileTarget,
+        sorted: Bool = True,
+        group_bytes: Int = GROUP_BYTES,
+    ):
+        """Into `target` directly, without a catalog (for tests)."""
+        self.target = target^
+        self.files = FileEntries()
+        self.rows = 0
         self.write_ns = 0
         self.sort_ns = 0
-        self.sort_first = sort_first
-        self.sort_second = sort_second
+        self.sorted = sorted
+        self.group_bytes = group_bytes
 
-    def put(mut self, var batch: RecordBatch) raises:
-        """Sorts the batch if asked to (each batch on its own: rows are in
-        order within a batch, not across the hour), then writes it."""
-        if self.sort_first:
-            var t_sort = perf_counter_ns()
-            batch = sorted_by_text(batch, self.sort_first, self.sort_second)
-            self.sort_ns += Int(perf_counter_ns() - t_sort)
+    def put(mut self, var rows: EventRows) raises:
+        """Orders a file's rows if asked to (each file on its own: rows are
+        in order within a file, not across the hour; only their row numbers
+        move), then writes them."""
+        var t_sort = perf_counter_ns()
+        var order = order_by_repo_type(rows) if self.sorted else arrival_order(
+            len(rows)
+        )
+        self.sort_ns += Int(perf_counter_ns() - t_sort)
         var t0 = perf_counter_ns()
-        self.writer.put(batch^)
+        var written = write_event_files(
+            self.target, rows, order, self.group_bytes
+        )
+        for ref f in written:
+            self.files.files.append(f.copy())
+        self.rows += len(rows)
         self.write_ns += Int(perf_counter_ns() - t0)
 
     def finish(deinit self) -> DataFiles:
         """Closes the last file and returns the entries of all of them, with
         the row count and the time spent sorting and writing."""
         var out = DataFiles()
-        out.rows = self.writer.rows
+        out.rows = self.rows
         out.sort_ms = self.sort_ns // 1_000_000
         out.write_ms = self.write_ns // 1_000_000
-        out.files = self.writer^.finish()
+        out.files = self.files^
         return out^

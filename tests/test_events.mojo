@@ -43,6 +43,9 @@ struct Trickle(GzInput, Movable):
         self._n()[] = min(self._n()[] + self.step, self.data.n)
         return self._n()[]
 
+    def release(self, upto: Int):
+        pass
+
 
 def _lines(n: Int) -> List[UInt8]:
     var s = String()

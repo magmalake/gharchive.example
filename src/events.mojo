@@ -1,30 +1,28 @@
-"""GH Archive hours into `gharchive.events` record batches.
+"""GH Archive hours into `gharchive.events` rows.
 
 `fetch_hour` is the body of gharchive's per-hour dista task: it downloads an
 hour (`fetch.Download`), gunzips what has arrived (`decode_index`), parses
-the NDJSON lines into column buffers (`EventParser`) and hands each full
-batch to a sink that writes it into the table (`datafiles.TableWriter`), all
-at once, so an hour is never fully in memory as JSON. The same pass feeds
+the NDJSON lines into columns (`EventParser`, `eventrows.EventRows`) and
+hands each full file's rows (`ROWS_PER_BATCH`) to a sink that writes them
+into the table (`datafiles.TableWriter`), all at once, so an hour is never
+fully in memory, as JSON or as rows (#37). The compressed hour is given back
+as it is decoded (`GzInput.release`). The same pass feeds
 `hourindex.HourIndex` for the three index tables.
 """
 
 from std.os import getenv
 from std.time import perf_counter_ns
 
-from iceberg.batch import ColumnBuilder, is_var_width_array
-from iceberg.kernels import arrow_type_for
-from iceberg.schema import Schema
-from parquet.arrow import ArrayData
 from iceberg.catalog.filesystem import Table
 from parquet import RecordBatch
 
 from datafiles import BatchSink, DataFiles, TableWriter
+from eventrows import EventRows, TextColumn
 from fetch import Download
 from deflate import MARGIN, GzipReader, InflateStatus
 from gzstream import GzInput, Whole
 from hourindex import HourIndex, write_index
 from jscan import Range, find_newline, scan_event, text, timestamp_micros
-from lake import events_schema
 
 comptime ROWS_PER_BATCH = 50_000
 """Rows per batch, which is also the rows of each Parquet file of the
@@ -61,70 +59,7 @@ def parse_hours(spec: String) raises -> List[Int]:
     return out^
 
 
-struct _Col(Movable):
-    """One column built straight into Arrow buffers, as `ColumnBuilder`
-    would build it from `Datum`s: a validity bit for every row, offsets
-    for strings, little-endian 64-bit values otherwise. Skipping the `Datum`
-    for every cell matters here: this runs for every cell of every event of
-    the hour."""
-
-    var a: ArrayData
-
-    def __init__(out self, schema: Schema, field_id: Int) raises:
-        var b = ColumnBuilder.of(schema, field_id)
-        self.a = ArrayData(
-            arrow_type_for(b.kind, b.precision, b.scale, b.length), b.name
-        )
-        self.a.nullable = b.nullable
-        self.a.field_id = Int32(field_id)
-        if is_var_width_array(self.a):
-            self.a.offsets.append(0)
-
-    @always_inline
-    def _row(mut self, valid: Bool):
-        """Starts the next row: grows the validity bitmap by a byte every
-        eight rows, and sets (or counts the absence of) this row's bit."""
-        var r = self.a.length
-        if r & 7 == 0:
-            self.a.validity.append(0)
-        if valid:
-            self.a.validity[r >> 3] |= UInt8(1) << UInt8(r & 7)
-        else:
-            self.a.null_count += 1
-        self.a.length = r + 1
-
-    @always_inline
-    def add_bytes(mut self, s: Span[UInt8, _]) raises:
-        """Appends a string value."""
-        self._row(True)
-        self.a.values.extend(s)
-        # Offsets are 32-bit, so a batch's strings must stay under 2 GiB.
-        if len(self.a.values) > 0x7FFFFFFF:
-            raise Error("gharchive: a string column passed 2 GiB in a batch")
-        self.a.offsets.append(Int32(len(self.a.values)))
-
-    @always_inline
-    def add_null(mut self):
-        """Appends a null string (the same offset again, no bytes)."""
-        self._row(False)
-        self.a.offsets.append(Int32(len(self.a.values)))
-
-    @always_inline
-    def add_i64(mut self, v: Int64):
-        """Appends a 64-bit integer (ids and microsecond timestamps)."""
-        self._row(True)
-        var at = len(self.a.values)
-        self.a.values.resize(at + 8, 0)
-        self.a.values.unsafe_ptr().unsafe_offset(at).unsafe_bitcast[
-            Int64
-        ]().unsafe_store[alignment=1](v)
-
-    def take(deinit self) -> ArrayData:
-        """The finished column."""
-        return self.a^
-
-
-def _add_text(mut c: _Col, data: Span[UInt8, _], r: Range, null_if_empty: Bool) raises:
+def _add_text(mut c: TextColumn, data: Span[UInt8, _], r: Range, null_if_empty: Bool) raises:
     """`text(data, r)` into `c`: an escaped string is decoded, a plain one
     copied as it is; "" (absent, null, empty) is null if `null_if_empty`."""
     var s = r.start + 1
@@ -148,39 +83,6 @@ def _add_text(mut c: _Col, data: Span[UInt8, _], r: Range, null_if_empty: Bool) 
         c.add_bytes(t.as_bytes())
 
 
-struct _Cols(Movable):
-    """The six columns of `gharchive.events` being built, in schema order
-    (the numbers in `__init__` are the schema's field ids)."""
-
-    var id: _Col
-    var type: _Col
-    var created: _Col
-    var repo: _Col
-    var actor: _Col
-    var payload: _Col
-
-    def __init__(out self) raises:
-        var s = events_schema()
-        self.id = _Col(s, 1)
-        self.type = _Col(s, 2)
-        self.created = _Col(s, 3)
-        self.repo = _Col(s, 4)
-        self.actor = _Col(s, 5)
-        self.payload = _Col(s, 6)
-
-    def take(deinit self) raises -> RecordBatch:
-        """The columns as one batch."""
-        var batch = RecordBatch()
-        batch.num_rows = self.id.a.length
-        batch.roots.append(batch.arena.add(self.id^.take()))
-        batch.roots.append(batch.arena.add(self.type^.take()))
-        batch.roots.append(batch.arena.add(self.created^.take()))
-        batch.roots.append(batch.arena.add(self.repo^.take()))
-        batch.roots.append(batch.arena.add(self.actor^.take()))
-        batch.roots.append(batch.arena.add(self.payload^.take()))
-        return batch^
-
-
 def _int(s: String) -> Int64:
     """The digits at the start of `s` as a number (GH Archive's event ids are
     strings in the JSON)."""
@@ -193,30 +95,38 @@ def _int(s: String) -> Int64:
 
 
 struct EventsAndIndex(Movable):
-    """What a finished parser has: the last batches and the hour's index."""
+    """What a finished parser has: the last files' rows and the hour's
+    index."""
 
-    var batches: List[RecordBatch]
+    var rows: List[EventRows]
     var index: HourIndex
 
-    def __init__(out self, var batches: List[RecordBatch], var index: HourIndex):
-        self.batches = batches^
+    def __init__(out self, var rows: List[EventRows], var index: HourIndex):
+        self.rows = rows^
         self.index = index^
 
-    def take_batches(deinit self) -> List[RecordBatch]:
-        """The batches, giving up the index."""
-        return self.batches^
+    def take_rows(deinit self) -> List[EventRows]:
+        """The rows, giving up the index."""
+        return self.rows^
+
+    def take_batches(deinit self) raises -> List[RecordBatch]:
+        """The rows as record batches, in arrival order."""
+        var out = List[RecordBatch]()
+        for i in range(len(self.rows)):
+            out.append(self.rows[i].to_batch())
+        return out^
 
     def take_index(deinit self) -> HourIndex:
-        """The index, giving up the batches."""
+        """The index, giving up the rows."""
         return self.index^
 
 
 struct EventParser(Movable):
     """NDJSON lines of an hour, fed a chunk of whole lines at a time, into
-    batches of `ROWS_PER_BATCH`."""
+    `EventRows` of `ROWS_PER_BATCH` (each a file of `gharchive.events`)."""
 
-    var out: List[RecordBatch]
-    var cols: _Cols
+    var out: List[EventRows]
+    var cols: EventRows
     var rows: Int
     var bad: Int
     var index: HourIndex
@@ -224,8 +134,8 @@ struct EventParser(Movable):
     """Whether `index` takes every event (candidates, counts, releases)."""
 
     def __init__(out self, indexing: Bool = False) raises:
-        self.out = List[RecordBatch]()
-        self.cols = _Cols()
+        self.out = List[EventRows]()
+        self.cols = EventRows()
         self.rows = 0
         self.bad = 0
         self.index = HourIndex()
@@ -249,10 +159,10 @@ struct EventParser(Movable):
         if not (f.id.found() and f.created_at.found()):
             self.bad += 1
             return
-        self.cols.id.add_i64(_int(text(data, f.id)))
+        self.cols.id.add(_int(text(data, f.id)))
         _add_text(self.cols.type, data, f.type, False)
         var at = timestamp_micros(data, f.created_at)
-        self.cols.created.add_i64(at)
+        self.cols.created.add(at)
         _add_text(self.cols.repo, data, f.repo_name, False)
         _add_text(self.cols.actor, data, f.actor_login, True)
         var p = f.payload
@@ -269,13 +179,13 @@ struct EventParser(Movable):
         else:
             self.cols.payload.add_null()
         self.rows += 1
-        # A full batch is moved to `out` and a fresh set of columns started;
+        # A full file's rows are moved to `out` and fresh columns started;
         # `decode_index` drains `out` to the sink after every window, so full
-        # batches don't pile up.
+        # files don't pile up.
         if self.rows % ROWS_PER_BATCH == 0:
-            var full = _Cols()
+            var full = EventRows()
             swap(full, self.cols)
-            self.out.append(full^.take())
+            self.out.append(full^)
 
     def finish(deinit self) raises -> List[RecordBatch]:
         """The batches, with the last partial one, dropping the index."""
@@ -283,10 +193,10 @@ struct EventParser(Movable):
         return both^.take_batches()
 
     def finish_index(deinit self) raises -> EventsAndIndex:
-        """The last batches, and what `index` collected."""
+        """The last files' rows, and what `index` collected."""
         var out = self.out^
         if self.rows % ROWS_PER_BATCH != 0:
-            out.append(self.cols^.take())
+            out.append(self.cols^)
         else:
             _ = self.cols^
         if self.bad > 0:
@@ -309,15 +219,16 @@ the hour is."""
 
 
 struct Collect(BatchSink, Movable):
-    """Keeps the batches (a sink for tests and tools that want them all)."""
+    """Keeps the rows, as record batches in arrival order (a sink for tests
+    and tools that want them all)."""
 
     var batches: List[RecordBatch]
 
     def __init__(out self):
         self.batches = List[RecordBatch]()
 
-    def put(mut self, var batch: RecordBatch) raises:
-        self.batches.append(batch^)
+    def put(mut self, var rows: EventRows) raises:
+        self.batches.append(rows.to_batch())
 
 
 @fieldwise_init
@@ -340,10 +251,10 @@ def _drain[S: BatchSink](mut p: EventParser, mut sink: S) raises -> Int:
     if len(p.out) == 0:
         return 0
     var t0 = perf_counter_ns()
-    var full = List[RecordBatch]()
+    var full = List[EventRows]()
     swap(full, p.out)
     for i in range(len(full)):
-        var b = RecordBatch()
+        var b = EventRows()
         swap(b, full[i])
         sink.put(b^)
     return Int(perf_counter_ns() - t0)
@@ -391,6 +302,7 @@ def decode_index[
             input.view(have), complete, max(lo + CHUNK, len(gz) + (1 << 20))
         )
         inflate_ns += Int(perf_counter_ns() - t0)
+        input.release(gz.input_used())
         if st == InflateStatus.FINISHED:
             p.feed(gz.output(), lo, len(gz))
             break
@@ -414,10 +326,10 @@ def decode_index[
     var done = p^.finish_index()
     swap(index, done.index)
     index.marker = marker
-    var rest = done^.take_batches()
+    var rest = done^.take_rows()
     var t1 = perf_counter_ns()
     for i in range(len(rest)):
-        var b = RecordBatch()
+        var b = EventRows()
         swap(b, rest[i])
         sink.put(b^)
     sink_ns += Int(perf_counter_ns() - t1)
@@ -447,7 +359,7 @@ def fetch_hour(
     # Each 50,000-row file is in (repo, type) order: a repository's events
     # repeat its URLs, and rows that resemble each other share a page. On
     # real files that is 7% smaller than (type, repo), 18% than arrival order.
-    var w = TableWriter(table, "repo", "type")
+    var w = TableWriter(table)
     # No marker rows: the step commits the index a day at a time.
     var index = HourIndex()
     var timing = decode_index(dl, w, index, True)

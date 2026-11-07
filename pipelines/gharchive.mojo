@@ -24,6 +24,12 @@ day's partition had, so a day's rows always come from one run.
 
     GHARCHIVE_HOURS=16-17 ./build/gharchive run --partitions 2025-09-15
 
+An hour in flight takes about `eventrows.HOUR_MEMORY_MB` (450 MB on the
+busiest hours, 2023-2025) and the run about 300 MB more, so a run's memory is
+about 300 + 450 * `GHARCHIVE_PARALLEL` MB (magmalake/mojo-census#37): the
+rows of one 50,000-row file at a time, written a 16 MB row group at a time,
+and the compressed hour only as far as it is decoded.
+
 `GHARCHIVE_HOURS` (`A-B` or `A,B,...`; default all 24) limits the hours, for
 trying it locally. `GHARCHIVE_FAIL_AFTER=k` (or `end`, after the index
 commits) makes the first attempt of a step fail after it committed k hours of
@@ -42,6 +48,7 @@ from orca.tables import ensure_table, find_commit, load_dataset
 from datafiles import DataFiles
 from daymerge import merge_job, merge_repo_hour
 from days import days_of
+from eventrows import HOUR_MEMORY_MB
 from events import fetch_hour, parse_hours
 from hourindex import IndexFiles, write_marker
 from indexing import commit_day, commit_hour, committed_hours, day_files
@@ -136,6 +143,11 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
     # bounded), so the default of 16 is sized for several machines; orca.toml
     # sets 2 for the 8 GB Hetzner server.
     var window = max(1, Int(getenv("GHARCHIVE_PARALLEL", "16")))
+    var in_flight = min(window, len(hours))
+    ctx.log(String(
+        day, ": ", in_flight, " hours in flight, about ",
+        300 + in_flight * HOUR_MEMORY_MB, " MB",
+    ))
 
     # Hours an earlier attempt of this step already committed to the events
     # come first in its commit order; recognise them without fetching
