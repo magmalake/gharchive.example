@@ -231,7 +231,9 @@ def _nav(href: String, label: String, current: Bool) -> String:
     )
 
 
-comptime BRAND = "Mojo census"
+comptime BRAND = "Mojourney"
+comptime SUBTITLE = "the Mojo ecosystem census"
+comptime SITE_URL = "https://mojourney.dev"
 
 comptime DESCRIPTION = (
     "Mojo repos, versions and growth, counted from GH Archive by"
@@ -244,8 +246,8 @@ def _page(
 ) raises -> Response:
     """The page around `body`; `section` is `repos`, `migrations` or `how`, the
     nav entry to light up (none for the overview and search); `q` fills the search box. An empty `title` is the
-    home page, titled with the brand alone; others read "<title> · Mojo census"."""
-    var full = String(BRAND) if title == "" else String(title, " · ", BRAND)
+    home page, titled with the brand alone; others read "<title> · Mojourney"."""
+    var full = String(BRAND, ": ", SUBTITLE) if title == "" else String(title, " · ", BRAND)
     var h = String(
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
         "<link rel=icon href=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23b45309'/%3E%3Crect x='3' y='8' width='2.5' height='5' fill='%23fff'/%3E%3Crect x='6.75' y='4' width='2.5' height='9' fill='%23fff'/%3E%3Crect x='10.5' y='6' width='2.5' height='7' fill='%23fff'/%3E%3C/svg%3E\">",
@@ -261,11 +263,11 @@ def _page(
         _nav("/migrations", "Migrations", section == "migrations"),
         _nav("/how", "How it works", section == "how"),
         "<span class=sep aria-hidden=true></span>",
-        "<a href='https://orca.mlake.dev' rel=noopener title='The pipelines that build this census'>orca<span class=arrow> &#8599;</span></a><a href='https://mlake.dev' rel=noopener>mlake.dev<span class=arrow> &#8599;</span></a></nav></div></header>",
+        "<a href='https://orca.mojourney.dev' rel=noopener title='The pipelines that build this census'>orca<span class=arrow> &#8599;</span></a><a href='https://mlake.dev' rel=noopener>mlake.dev<span class=arrow> &#8599;</span></a></nav></div></header>",
         "<main><div class=wrap>", body, "</div></main>",
         "<footer><div class=wrap><p>An independent project; Mojo is a trademark of Modular Inc.",
         " Data from <a href='https://www.gharchive.org' rel=noopener>GH Archive</a>, read by the",
-        " mojo-census pipelines on <a href='https://orca.mlake.dev' rel=noopener>orca</a>: the hour's",
+        " mojo-census pipelines on <a href='https://orca.mojourney.dev' rel=noopener>orca</a>: the hour's",
         " public GitHub events, the repositories with Mojo in them, and what their lock files",
         " say at each commit.</p>",
         "<nav><a href='https://mlake.dev' rel=noopener>mlake.dev</a>",
@@ -945,7 +947,7 @@ def overview(req: Request, c: Cache) raises -> Response:
         ref ov = c.ov
         var estimate = req.query_param("estimate") == "1"
         var h = String(
-            "<h1>Mojo census</h1><p class=lead>How the Mojo language is being used on GitHub:",
+            "<h1>Mojourney: the Mojo ecosystem census</h1><p class=lead>How the Mojo language is being used on GitHub:",
             " the repos that contain Mojo, found in GH Archive, with their whole git history",
             " read. An independent project, not affiliated with Modular.</p>",
         )
@@ -1132,7 +1134,7 @@ def overview(req: Request, c: Cache) raises -> Response:
         # As of.
         h.write(
             "<p class=asof>Data as of ", _as_of(c.sources.as_of_ms), " (the latest snapshot of the tables",
-            " behind this page; every run is on <a href='", ORCA_UI, "/runs' rel=noopener>orca.mlake.dev/runs</a>).",
+            " behind this page; every run is on <a href='", ORCA_UI, "/runs' rel=noopener>orca.mojourney.dev/runs</a>).",
             " Refreshed every ", _span(refresh_secs()), "; built ", _span(Int(now() - c.built_at)), " ago.",
             " Repos are discovered from the GH Archive days loaded so far",
         )
@@ -1877,7 +1879,7 @@ def repo_json(req: Request, c: Cache) raises -> Response:
 
 
 comptime ORCA_DOCS = "https://mlake.dev/s/orca/docs"
-comptime ORCA_UI = "https://orca.mlake.dev"
+comptime ORCA_UI = "https://orca.mojourney.dev"
 comptime GH = "https://github.com/magmalake"
 
 comptime HOW = (
@@ -1922,7 +1924,7 @@ comptime HOW = (
     "<p>Every run, with its steps, logs, machines and the tables it wrote, is on"
     " <a href='"
     + ORCA_UI
-    + "/runs' rel=noopener>orca.mlake.dev</a>. The orca docs cover <a href='"
+    + "/runs' rel=noopener>orca.mojourney.dev</a>. The orca docs cover <a href='"
     + ORCA_DOCS
     + "/build' rel=noopener>writing a pipeline</a>, <a href='"
     + ORCA_DOCS

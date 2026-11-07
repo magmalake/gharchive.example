@@ -1,5 +1,7 @@
 # mojo-census
 
+The code behind [Mojourney: the Mojo ecosystem census](https://mojourney.dev).
+
 A lake of GitHub activity built on [magmalake](https://magmalake.org), and
 a console that shows how Mojo repos have grown. Everything is Mojo, in
 one pixi project: five [orca](https://github.com/magmalake/orca.mojo)
@@ -7,8 +9,8 @@ pipelines write Iceberg tables, the project's own `orca` schedules them,
 and a [flare](https://github.com/magmalake/flare_mlake) app reads the
 tables.
 
-It runs on AWS: the console is at <https://census.mlake.dev>, and orca's UI,
-with every run, log and table, at <https://orca.mlake.dev>. The
+It runs on AWS: the console is at <https://mojourney.dev>, and orca's UI,
+with every run, log and table, at <https://orca.mojourney.dev>. The
 [getting-started guide](https://mlake.dev/getting-started/) builds it two
 ways, with an agent from [PROMPT.md](PROMPT.md) or step by step.
 
