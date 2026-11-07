@@ -15,9 +15,12 @@ max_runs = 1
 fills = "all"
 fill_order = "oldest"
 fill_max_runs = 1
-# dista workers in one process: 4 on the CAX21 (the default server); an import
-# on the CAX41 registers 14 (edit, deploy, register), then back to 4.
-env = { DISTA_WORKER_SLOTS = "4" }
+# DISTA_WORKER_SLOTS: dista workers in one process, 4 on the CAX21 (4 vCPU,
+# 8 GB). GHARCHIVE_PARALLEL: downloads at once; its default of 16 is sized
+# for four AWS instances and took the CAX21 to 99.6% memory (the watchdog
+# paused everything). For an import on the CAX41 use 14 and 16 (edit, deploy,
+# register), then back to 4 and 4.
+env = { DISTA_WORKER_SLOTS = "4", GHARCHIVE_PARALLEL = "4" }
 
 [pipelines.gharchive_index]
 env = { DISTA_WORKER_SLOTS = "4" }
