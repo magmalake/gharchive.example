@@ -48,22 +48,54 @@ RUN for b in /out/bin/* /out/pipelines/*; do [ -x "$b" ] || continue; \
 # (postgres), flare's shims (orca ui, apps), and every tin's shim, such as
 # objectstore's and the codecs' (zstd, for Iceberg writes); and
 # llvm-symbolizer, which Mojo's runtime runs to name a crash's frames, with
-# what it links.
+# what it links. Stripped of their symbol tables (libstdc++: 23.6 MB, 2.7
+# stripped). Not conda's libpsl, which brings ICU (36 MB) and which libcurl
+# alone links: the image has Debian's libpsl5. libpq once, with its two
+# names as links. OpenSSL stays conda's: libcurl and libpq need 3.2.
 RUN env=/src/project/.pixi/envs/default && mkdir -p /out/lib /out/libexec \
     && cp -L $env/bin/llvm-symbolizer /out/libexec/ \
-    && loaded=$(ls $env/lib/libpq.so* $env/lib/libflare_*.so $env/lib/lib*mojo*.so 2>/dev/null) \
-    && ldd /out/bin/* /out/pipelines/* /out/libexec/* $loaded 2> /dev/null | awk -v e="$env" '$3 ~ "^"e {print $3}' \
+    && loaded=$(ls $env/lib/libflare_*.so $env/lib/lib*mojo*.so 2>/dev/null) \
+    && ldd /out/bin/* /out/pipelines/* /out/libexec/* $loaded $env/lib/libpq.so.5 2> /dev/null \
+        | awk -v e="$env" '$3 ~ "^"e {print $3}' | grep -v -e '/libicu' -e '/libpsl' -e '/libpq\.' \
         | sort -u | xargs -r cp -L -t /out/lib \
-    && cp -L -t /out/lib $loaded
+    && cp -L -t /out/lib $loaded \
+    && pq=$(basename $(readlink -f $env/lib/libpq.so.5)) && cp -L $env/lib/$pq /out/lib/ \
+    && ln -s $pq /out/lib/libpq.so.5 && ln -s libpq.so.5 /out/lib/libpq.so \
+    && for f in /out/lib/*; do [ -L "$f" ] || strip --strip-unneeded "$f" || exit 1; done
+
+# git, for mojo_history and mojo_versions: only the `git` binary (every
+# builtin they run) and git-remote-https, without Perl, Tcl/Tk, gettext,
+# Python or expat (Debian's git package and what it pulls in: 90 MB; this,
+# 5 MB). Built on the image's Debian against the pixi environment's libcurl,
+# which /opt/orca/lib ships anyway.
+FROM debian:bookworm-slim AS git
+ARG GIT_VERSION=2.51.2
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gcc make libc6-dev \
+      zlib1g-dev libpsl5 xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/lib /deps/lib
+COPY --from=build /src/project/.pixi/envs/default/include/curl /deps/include/curl
+RUN curl -fsSL https://mirrors.edge.kernel.org/pub/software/scm/git/git-$GIT_VERSION.tar.xz | tar xJ -C /usr/src \
+    && cd /usr/src/git-$GIT_VERSION && ln -s libcurl.so.4 /deps/lib/libcurl.so \
+    && make -j"$(nproc)" prefix=/opt/orca gitexecdir=/opt/orca/libexec/git \
+        template_dir=/opt/orca/libexec/git/templates \
+        NO_PERL=1 NO_TCLTK=1 NO_GETTEXT=1 NO_PYTHON=1 NO_EXPAT=1 NO_OPENSSL=1 NO_INSTALL_HARDLINKS=1 \
+        CURL_CFLAGS=-I/deps/include CURL_LDFLAGS='-L/deps/lib -lcurl -Wl,-rpath-link,/deps/lib' \
+        git git-remote-http \
+    && mkdir -p /opt/orca/bin /opt/orca/libexec/git/templates \
+    && install -s git /opt/orca/libexec/git/git \
+    && install -s git-remote-http /opt/orca/libexec/git/git-remote-https \
+    && ln -s ../libexec/git/git /opt/orca/bin/git
 
 FROM debian:bookworm-slim
-# mojo_history clones each repository with git.
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata ca-certificates git \
+# libpsl5 for libcurl (see above).
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata ca-certificates libpsl5 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/lib /opt/orca/lib
 COPY --from=build /out/bin /opt/orca/bin
 COPY --from=build /out/pipelines /opt/orca/pipelines
 COPY --from=build /out/libexec /opt/orca/libexec
+COPY --from=git /opt/orca /opt/orca
 # libcurl (objectstore) and OpenSSL (flare) look for CA certificates under
 # the build environment's prefix, compiled in when conda relocated them, so
 # keep that directory at the same path.
@@ -80,5 +112,5 @@ ARG ORCA_COMMIT=""
 ENV ORCA_CONFIG=/opt/orca/orca.toml ORCA_PIPELINES_DIR=/opt/orca/pipelines \
     ORCA_SOURCE=${ORCA_SOURCE} ORCA_COMMIT=${ORCA_COMMIT}
 ENV CONDA_PREFIX=/opt/orca LD_LIBRARY_PATH=/opt/orca/lib PATH=/opt/orca/bin:/opt/orca/pipelines:/usr/bin:/bin \
-    LLVM_SYMBOLIZER_PATH=/opt/orca/libexec/llvm-symbolizer
+    LLVM_SYMBOLIZER_PATH=/opt/orca/libexec/llvm-symbolizer GIT_EXEC_PATH=/opt/orca/libexec/git
 ENTRYPOINT ["/opt/orca/bin/orca"]
