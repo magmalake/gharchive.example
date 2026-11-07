@@ -20,7 +20,7 @@ and a `recipe.yaml` of its own), the rows of `mojo.repo_deps`.
 from std.os import getenv
 
 from deps import Dep, declared_count, dedupe, encode_deps, is_recipe, manifest_deps
-from history import _sh, _workdir, safe_repo
+from history import TIMED_OUT, _sh, _workdir, git_clone, git_net, git_timeout_ms, safe_repo
 from mojo_releases import estimate_version
 from versions import (
     SOURCE_DATE,
@@ -170,10 +170,14 @@ def _trim(mut paths: List[String]):
 
 def _show(dir: String, rev: String, path: String) raises -> String:
     """`path` at `rev`, cut to `MAX_BYTES`, or "" if there isn't one. In a
-    blobless clone this is what fetches the blob, one file at a time."""
+    blobless clone this is what fetches the blob, one file at a time, so it
+    gets git's stall detector and `GIT_TIMEOUT_SECONDS` as a clone does."""
     var r = _sh(String(
-        "git -C '", dir, "' show '", rev, ":", path, "' 2>/dev/null | head -c ", MAX_BYTES,
-    ))
+        git_net(), " -C '", dir, "' show '", rev, ":", path, "' 2>/dev/null | head -c ", MAX_BYTES,
+    ), git_timeout_ms())
+    if r[0] == TIMED_OUT:
+        # Not "no such file": the repository fails, and keeps its old row.
+        raise Error("git show ", path, ": ", r[1])
     if r[0] != 0:
         return String()
     return r[1]
@@ -264,12 +268,9 @@ def _read(repo: String, dir: String, mut out: HeadVersion) raises:
     """Fills `out` from a fresh bare clone in `dir`; git failures go in
     `out.error`. The caller removes the clone."""
     var shallow = repo == "modular/modular"
-    _ = _sh(String("mkdir -p '", _workdir(), "' && rm -rf '", dir, "'"))
-    var clone = _sh(String(
-        "GIT_TERMINAL_PROMPT=0 git clone --quiet --bare --no-tags --filter=blob:none",
-        " --depth 1" if shallow else "",
-        " https://github.com/", repo, ".git '", dir, "' 2>&1",
-    ))
+    var clone = git_clone(
+        repo, dir, String(" --no-tags --filter=blob:none", " --depth 1" if shallow else "")
+    )
     if clone[0] != 0:
         out.error = String("git clone failed: ", clone[1].strip())
         return

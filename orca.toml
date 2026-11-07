@@ -27,6 +27,14 @@ fill_max_runs = 1
 # above 4 the cores, not memory, are the limit. On the CAX41 (16 vCPU, 32 GB)
 # 12 and 12, about 5.7 GB. Still 2 and 2 here until 4 and 4 is tried on the
 # server (edit, deploy, register).
+#
+# Timeouts and retries of an hour's download (#49), defaults in brackets:
+# GHARCHIVE_CONNECT_SECONDS (20) for the connect and TLS handshake,
+# GHARCHIVE_IDLE_SECONDS (30) of silence before a stalled read fails,
+# GHARCHIVE_TIMEOUT_SECONDS (900) for the whole hour, every try included, and
+# GHARCHIVE_RETRIES (4) after the first try, with backoff 1 s, 2 s, 4 s ...
+# up to 30 s (README, "Timeouts and retries"). Before #49 a stalled read
+# had no timeout, and a fill run waited 5 h 39 m on one.
 env = { DISTA_WORKER_SLOTS = "2", GHARCHIVE_PARALLEL = "2" }
 
 [pipelines.gharchive_index]
@@ -37,6 +45,11 @@ env = { DISTA_WORKER_SLOTS = "3" }
 secrets = { GITHUB_TOKEN = "orca/github-token" }
 
 [pipelines.mojo_history]
+# Clones (here and in mojo_versions): GIT_TIMEOUT_SECONDS (600) kills one
+# that runs longer, GIT_RETRIES (3) more tries with backoff, and git aborts a
+# transfer under GIT_LOW_SPEED_LIMIT (1000) bytes a second for
+# GIT_LOW_SPEED_SECONDS (60). A repository that still fails is logged and
+# skipped for the run.
 env = { DISTA_WORKER_SLOTS = "3" }
 
 [pipelines.mojo_versions]

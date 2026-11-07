@@ -249,6 +249,31 @@ date before that is refused. Without a token mojo_repos checks 25 candidates
 a run (1000 with `GITHUB_TOKEN`). The whole sequence takes about 40 seconds
 once the download is under way.
 
+### Timeouts and retries
+
+A GH Archive hour download and a git clone each have a deadline, and a
+transient failure is tried again with exponential backoff and jitter (1 s,
+2 s, 4 s ... up to 30 s, each between half and all of that; a 429's or 503's
+`Retry-After` instead). Each retry prints a `retry:` line in the worker's
+log. A download that stops mid-body resumes from the byte it stopped at
+(`Range`). A 404 (an hour not yet published) and a repository that is gone
+or private are not retried; a repository whose clone still fails is logged
+as failed for that run, and mojo_versions keeps its old row. The settings,
+all in the environment (orca.toml's `env`):
+
+| Variable | Default | What it bounds |
+|---|---|---|
+| `GHARCHIVE_CONNECT_SECONDS` | 20 | the TCP connect and TLS handshake of one request |
+| `GHARCHIVE_IDLE_SECONDS` | 30 | silence on a connection: a stalled read fails after it |
+| `GHARCHIVE_TIMEOUT_SECONDS` | 900 | an hour's download, every try and wait included (not the time the decoder holds it back) |
+| `GHARCHIVE_RETRIES` | 4 | retries after the first try |
+| `GIT_TIMEOUT_SECONDS` | 600 | one clone (or a blobless clone's `git show`): its process group is killed after it |
+| `GIT_RETRIES` | 3 | retries of a clone after the first try |
+| `GIT_LOW_SPEED_LIMIT`, `GIT_LOW_SPEED_SECONDS` | 1000, 60 | git's own stall detector (`http.lowSpeedLimit`, `http.lowSpeedTime`): under 1000 B/s for 60 s aborts the transfer |
+
+`tests/test_fetch.mojo` checks them against a local server that stalls,
+fails and cuts connections (`tests/http_faults.py`, which needs `python3`).
+
 ### The orca way: Postgres, the scheduler and the UI
 
 A Postgres that lasts between sessions, under `build/` (from conda-forge's
