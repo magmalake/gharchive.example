@@ -90,6 +90,13 @@ def donut(
     return svg^
 
 
+def grid_line(x1: Int, x2: Int, y: Int) -> String:
+    """A horizontal gridline. The last value is quoted: in HTML an unquoted
+    `y2=202/>` reads as `y2="202/"`, which leaves the `<line>` open and
+    swallows every later mark of the chart."""
+    return String("<line class=grid x1=", x1, " x2=", x2, " y1=", y, " y2='", y, "'/>")
+
+
 def line_chart(
     months: List[String],
     names: List[String],
@@ -125,7 +132,7 @@ def line_chart(
     for t in ticks:
         var y = up + ph - Int(t * Int64(ph) // top)
         svg.write(
-            "<line class=grid x1=", left, " x2=", w - right, " y1=", y, " y2=", y, "/>",
+            grid_line(left, w - right, y),
             "<text x=", left - 6, " y=", y + 4, " text-anchor=end>", compact(t),
             "%" if percent else "", "</text>",
         )
