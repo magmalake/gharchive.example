@@ -114,7 +114,7 @@ environments:
       - conda_source: memory-region-mojo[c0e0ffd5] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
       - conda_source: objectstore-mojo[7d1c7509] @ git+https://github.com/magmalake/objectstore.mojo?rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
       - conda_source: objectstore-shim[2602ced2] @ git+https://github.com/magmalake/objectstore.mojo?subdirectory=shim&rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
-      - conda_source: orca-mojo[0646126c] @ git+https://github.com/magmalake/orca.mojo?rev=2c41d942d1852f033be73984b0176065fe94b99a#2c41d942d1852f033be73984b0176065fe94b99a
+      - conda_source: orca-mojo[2d03b238] @ git+https://github.com/magmalake/orca.mojo?rev=42514adf269c509ad840a488326658e573f26b2d#42514adf269c509ad840a488326658e573f26b2d
       - conda_source: parquet-full-mojo[00e38bd2] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=5d265f9004fdad1522b80c8770c8a7a7f5f9f089#5d265f9004fdad1522b80c8770c8a7a7f5f9f089
       - conda_source: parquet-mojo[b59b6cf6] @ git+https://github.com/magmalake/parquet.mojo?rev=5d265f9004fdad1522b80c8770c8a7a7f5f9f089#5d265f9004fdad1522b80c8770c8a7a7f5f9f089
       - conda_source: postgres-mojo[e1767212] @ git+https://github.com/magmalake/postgres.mojo?rev=324b2bb61e2e80327654abecf70fd4b2defbc50d#324b2bb61e2e80327654abecf70fd4b2defbc50d
@@ -214,7 +214,7 @@ environments:
       - conda_source: memory-region-mojo[8b9c80ce] @ git+https://github.com/magmalake/memory-region.mojo?rev=40068c4f95ea659e9b78aa91ced45420b07e3e6e#40068c4f95ea659e9b78aa91ced45420b07e3e6e
       - conda_source: objectstore-mojo[bf39ea9c] @ git+https://github.com/magmalake/objectstore.mojo?rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
       - conda_source: objectstore-shim[57146c0c] @ git+https://github.com/magmalake/objectstore.mojo?subdirectory=shim&rev=ff66975c095f392695facc1b6dd56823dec914bc#ff66975c095f392695facc1b6dd56823dec914bc
-      - conda_source: orca-mojo[92d9b503] @ git+https://github.com/magmalake/orca.mojo?rev=2c41d942d1852f033be73984b0176065fe94b99a#2c41d942d1852f033be73984b0176065fe94b99a
+      - conda_source: orca-mojo[4ece168f] @ git+https://github.com/magmalake/orca.mojo?rev=42514adf269c509ad840a488326658e573f26b2d#42514adf269c509ad840a488326658e573f26b2d
       - conda_source: parquet-full-mojo[29564742] @ git+https://github.com/magmalake/parquet.mojo?subdirectory=full&rev=5d265f9004fdad1522b80c8770c8a7a7f5f9f089#5d265f9004fdad1522b80c8770c8a7a7f5f9f089
       - conda_source: parquet-mojo[4b17349c] @ git+https://github.com/magmalake/parquet.mojo?rev=5d265f9004fdad1522b80c8770c8a7a7f5f9f089#5d265f9004fdad1522b80c8770c8a7a7f5f9f089
       - conda_source: postgres-mojo[6a292a6e] @ git+https://github.com/magmalake/postgres.mojo?rev=324b2bb61e2e80327654abecf70fd4b2defbc50d#324b2bb61e2e80327654abecf70fd4b2defbc50d
@@ -1318,6 +1318,16 @@ packages:
   run_exports: {}
   size: 112341
   timestamp: 1788802215348
+- conda: https://conda.anaconda.org/conda-forge/noarch/click-8.5.1-pyh5ded981_0.conda
+  sha256: f26981878e8ccdc82fc9025d25997aff119080486e5d089948cb718d428d8cb0
+  md5: d996564510ceb5744c225b93891316dc
+  depends:
+  - python >=3.11
+  - python
+  license: BSD-3-Clause
+  run_exports: {}
+  size: 112921
+  timestamp: 1794046236533
 - conda: https://conda.anaconda.org/conda-forge/noarch/compiler-rt23_osx-arm64-23.1.4-hb8825d9_0.conda
   sha256: 2e3bbefd07a8a21ea498a1451acb100f05d0147729ceff0944edeffce18224dc
   md5: 150603c8ce6880c52da08fcf46a8e269
@@ -5064,8 +5074,8 @@ packages:
   - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ncurses-6.6-he64c551_1.conda
   - conda: https://conda.anaconda.org/conda-forge/osx-arm64/openssl-3.6.5-h55eecbc_0.conda
   - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-- conda_source: orca-mojo[0646126c] @ git+https://github.com/magmalake/orca.mojo?rev=2c41d942d1852f033be73984b0176065fe94b99a#2c41d942d1852f033be73984b0176065fe94b99a
-  version: 0.11.0
+- conda_source: orca-mojo[2d03b238] @ git+https://github.com/magmalake/orca.mojo?rev=42514adf269c509ad840a488326658e573f26b2d#42514adf269c509ad840a488326658e573f26b2d
+  version: 0.12.0
   build: he8cfe8b_0
   subdir: linux-aarch64
   variants:
@@ -5194,7 +5204,7 @@ packages:
   - conda: https://conda.anaconda.org/conda-forge/linux-aarch64/zstd-1.5.7-h9d15635_7.conda
   - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_3.conda
   - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-hbd8a1cb_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/noarch/click-8.5.0-pyh5ded981_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/noarch/click-8.5.1-pyh5ded981_0.conda
   - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.14.10-py314hd8ed1ab_100.conda
   - conda: https://conda.anaconda.org/conda-forge/noarch/importlib-metadata-10.0.0-pyh5ded981_0.conda
   - conda: https://conda.anaconda.org/conda-forge/noarch/jupyter_client-8.6.3-pyhd8ed1ab_1.conda
@@ -5241,8 +5251,8 @@ packages:
   - conda_source: thrift-mojo[5f9111c9] @ git+https://github.com/magmalake/thrift.mojo?rev=21cdbce67d22d72e88e88a60e2f168b05b4ef9fa#21cdbce67d22d72e88e88a60e2f168b05b4ef9fa
   - conda_source: zstd-mojo[d9c588bc] @ git+https://github.com/magmalake/zstd.mojo?rev=76190bb31012cd2d2f6712c4e1724a66474215db#76190bb31012cd2d2f6712c4e1724a66474215db
   - conda_source: zstd-shim[d55ce47a] @ git+https://github.com/magmalake/zstd.mojo?subdirectory=shim&rev=76190bb31012cd2d2f6712c4e1724a66474215db#76190bb31012cd2d2f6712c4e1724a66474215db
-- conda_source: orca-mojo[92d9b503] @ git+https://github.com/magmalake/orca.mojo?rev=2c41d942d1852f033be73984b0176065fe94b99a#2c41d942d1852f033be73984b0176065fe94b99a
-  version: 0.11.0
+- conda_source: orca-mojo[4ece168f] @ git+https://github.com/magmalake/orca.mojo?rev=42514adf269c509ad840a488326658e573f26b2d#42514adf269c509ad840a488326658e573f26b2d
+  version: 0.12.0
   build: h60d57d3_0
   subdir: osx-arm64
   variants:
@@ -5319,7 +5329,7 @@ packages:
   host_packages:
   - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_3.conda
   - conda: https://conda.anaconda.org/conda-forge/noarch/ca-certificates-2026.10.23-hbd8a1cb_0.conda
-  - conda: https://conda.anaconda.org/conda-forge/noarch/click-8.5.0-pyh5ded981_0.conda
+  - conda: https://conda.anaconda.org/conda-forge/noarch/click-8.5.1-pyh5ded981_0.conda
   - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.14.10-py314hd8ed1ab_100.conda
   - conda: https://conda.anaconda.org/conda-forge/noarch/importlib-metadata-10.0.0-pyh5ded981_0.conda
   - conda: https://conda.anaconda.org/conda-forge/noarch/jupyter_client-8.6.3-pyhd8ed1ab_1.conda
