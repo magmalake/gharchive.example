@@ -37,6 +37,9 @@ comptime MAX_BYTES = 262144
 
 @fieldwise_init
 struct HeadVersion(Copyable, Movable):
+    """One row of `mojo.repo_versions`, and what the `read_head_version`
+    task returns. A plain struct so dista can send it by reflection."""
+
     var repo: String
     var error: String
     """Empty when HEAD was read."""
@@ -54,6 +57,7 @@ struct HeadVersion(Copyable, Movable):
 
     @staticmethod
     def empty(repo: String) -> Self:
+        """A row with nothing found and no error."""
         return Self(
             repo, String(), String(), String(), String(), String(), String(),
             String(), 0, 0,
@@ -61,6 +65,7 @@ struct HeadVersion(Copyable, Movable):
 
 
 def _base(path: String) -> String:
+    """The last component of `path`."""
     var slash = path.rfind("/")
     if slash < 0:
         return path
@@ -89,6 +94,9 @@ struct Candidates(Copyable, Movable):
 def classify(paths: List[String]) -> Candidates:
     """Sorts a repository's file list into the kinds `read_head_version`
     reads. A kind keeps `MAX_FILES` files, shortest paths first."""
+    # Lock files, manifests and version files count only at the repository
+    # root (`root`): a nested `pixi.lock` belongs to some example or
+    # dependency, not to the project. CI and Docker files can live deeper.
     var c = Candidates()
     for p in paths:
         var base = _base(p)
@@ -124,7 +132,9 @@ def classify(paths: List[String]) -> Candidates:
 
 
 def _trim(mut paths: List[String]):
-    """The first `MAX_FILES` by length, then name."""
+    """The first `MAX_FILES` by length, then name: the shortest paths are
+    the top-level files, which are the most likely to state the project's
+    own version."""
     for i in range(1, len(paths)):
         var j = i
         while j > 0 and (
@@ -138,6 +148,8 @@ def _trim(mut paths: List[String]):
 
 
 def _show(dir: String, rev: String, path: String) raises -> String:
+    """`path` at `rev`, cut to `MAX_BYTES`, or "" if there isn't one. In a
+    blobless clone this is what fetches the blob, one file at a time."""
     var r = _sh(String(
         "git -C '", dir, "' show '", rev, ":", path, "' 2>/dev/null | head -c ", MAX_BYTES,
     ))
@@ -162,6 +174,9 @@ def _first(
         var text = _show(dir, "HEAD", p)
         if text.byte_length() == 0:
             continue
+        # `pyproject.toml` and `requirements.txt` are in the manifest kind
+        # too, and they aren't pixi manifests: when `manifest_version` finds
+        # nothing, `pin_version` reads their `mojo==...` pins.
         var v: String
         if kind == "lock":
             v = lock_version(text)
@@ -185,6 +200,7 @@ def pick_head(
     lock: String, manifest: String, file: String, ci: String, docker: String,
     readme: String,
 ) -> Tuple[String, String]:
+    """`versions.pick_version` (the order of precedence is kept there)."""
     return pick_version(lock, manifest, file, ci, docker, readme)
 
 
@@ -213,6 +229,8 @@ def read_head_version(repo: String) raises -> HeadVersion:
 
 
 def _read(repo: String, dir: String, mut out: HeadVersion) raises:
+    """Fills `out` from a fresh bare clone in `dir`; git failures go in
+    `out.error`. The caller removes the clone."""
     var shallow = repo == "modular/modular"
     _ = _sh(String("mkdir -p '", _workdir(), "' && rm -rf '", dir, "'"))
     var clone = _sh(String(
@@ -234,6 +252,8 @@ def _read(repo: String, dir: String, mut out: HeadVersion) raises:
         if line.byte_length() > 0:
             paths.append(String(line))
     var c = classify(paths)
+    # Each kind is read on its own, first file that names a version wins
+    # (`_first`), and `pick_head` then chooses between the kinds.
     var f_lock = String()
     var f_manifest = String()
     var f_file = String()
@@ -268,7 +288,10 @@ def _read(repo: String, dir: String, mut out: HeadVersion) raises:
             out.version = own^
             out.source = String(SOURCE_REPO)
             out.file = String("Mojo/pixi.lock")
-    # The last commit that touched a Mojo file (a shallow clone has only HEAD).
+    # The estimate by date uses the last commit that touched a Mojo file,
+    # not HEAD: a project that stopped writing Mojo in 2024 was built with
+    # that year's release even if its README was edited since. (A shallow
+    # clone has only HEAD, so modular/modular falls back to HEAD's date.)
     var last = _sh(String(
         "git -C '", dir, "' log -1 --format=%ct HEAD -- '*.mojo' '*.🔥' 2>/dev/null",
     ))

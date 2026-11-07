@@ -22,7 +22,9 @@ from sortrows import sorted_by_text
 
 
 def merge_job(paths: List[String]) -> String:
-    """The `merge_repo_hour` job for files of the table, in hour order."""
+    """The `merge_repo_hour` job for files of the table, in hour order: the
+    paths, one a line, as one string (the single argument of a dista task
+    here)."""
     var job = String()
     for i in range(len(paths)):
         if i > 0:
@@ -37,6 +39,8 @@ def merged_rows(batches: List[RecordBatch]) raises -> RecordBatch:
     for ref b in batches:
         if b.num_rows == 0:
             continue
+        # The first non-empty batch is copied; the rest are appended to its
+        # columns in place, so no row is copied twice.
         if len(out.roots) == 0:
             out = b.copy()
             continue
@@ -52,6 +56,8 @@ def merge_repo_hour(job: String) raises -> IndexFiles:
     them. `repo_hour` of the answer is that file's entry, none if the files
     had no rows."""
     var t0 = perf_counter_ns()
+    # Files are read back through the table's own `FileIO`, the way they were
+    # written: they are not in any snapshot yet, so a scan can't find them.
     var table = load_dataset(REPO_HOUR)
     var paths = List[String]()
     for p in job.split("\n"):
@@ -68,10 +74,16 @@ def merge_repo_hour(job: String) raises -> IndexFiles:
     if all.num_rows > 0:
         # The hours were appended in order and the sort is stable, so rows
         # with the same (repo, actor) stay in hour order.
+        # Repository first, so mojo_activity's scan for a handful of
+        # repositories (it filters on `repo`) can skip most row groups; then
+        # actor, with hours left in order by the stable sort.
         var w = FileWriter(table)
         w.put(sorted_by_text(all, "repo", "actor"))
         out.repo_hour_rows = w.rows
         out.repo_hour = w^.finish()
+    # The hourly files were never committed, so nothing references them; the
+    # merged file replaces them in the day's commit. A task that dies before
+    # this point leaves them, and the step's retry builds them again.
     for ref p in paths:
         table.io.delete(p)
     out.write_ms = Int(perf_counter_ns() - t0) // 1_000_000

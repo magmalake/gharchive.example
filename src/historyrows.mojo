@@ -18,7 +18,13 @@ from lake import (
 )
 
 
+# Each table has a pair: `*_rows` reads a batch scanned from the table into
+# structs, and `*_batch` builds a batch to append or write. Column positions
+# in the builders are 1-based field ids of the schema in `lake.mojo`.
+
+
 def commit_rows(b: RecordBatch) raises -> List[CommitRow]:
+    """The rows of a scanned `mojo.commits` batch."""
     var out = List[CommitRow]()
     var c = List[Int]()
     for name in [
@@ -44,6 +50,7 @@ def commit_rows(b: RecordBatch) raises -> List[CommitRow]:
 
 
 def commits_batch(rows: List[CommitRow]) raises -> RecordBatch:
+    """`rows` as a batch of `mojo.commits`."""
     var s = commits_schema()
     var cs = List[ColumnBuilder]()
     for i in range(9):
@@ -62,6 +69,7 @@ def commits_batch(rows: List[CommitRow]) raises -> RecordBatch:
 
 
 def migration_rows(b: RecordBatch) raises -> List[MigrationRow]:
+    """The rows of a scanned `mojo.migrations` batch."""
     var out = List[MigrationRow]()
     var c = List[Int]()
     for name in ["repo", "sha", "committed_at", "kind", "from_value", "to_value"]:
@@ -81,6 +89,7 @@ def migration_rows(b: RecordBatch) raises -> List[MigrationRow]:
 
 
 def migrations_batch(rows: List[MigrationRow]) raises -> RecordBatch:
+    """`rows` as a batch of `mojo.migrations`."""
     var s = migrations_schema()
     var cs = List[ColumnBuilder]()
     for i in range(6):
@@ -96,6 +105,7 @@ def migrations_batch(rows: List[MigrationRow]) raises -> RecordBatch:
 
 
 def tag_rows(b: RecordBatch) raises -> List[TagRow]:
+    """The rows of a scanned `mojo.tags` batch."""
     var out = List[TagRow]()
     var c = List[Int]()
     for name in [
@@ -119,6 +129,7 @@ def tag_rows(b: RecordBatch) raises -> List[TagRow]:
 
 
 def tags_batch(rows: List[TagRow]) raises -> RecordBatch:
+    """`rows` as a batch of `mojo.tags`."""
     var s = tags_schema()
     var cs = List[ColumnBuilder]()
     for i in range(7):
@@ -135,6 +146,9 @@ def tags_batch(rows: List[TagRow]) raises -> RecordBatch:
 
 
 def head_version_rows(b: RecordBatch) raises -> List[HeadVersion]:
+    """The rows of a scanned `mojo.repo_versions` batch (`error` is empty).
+    `read_at` is the second column but the last field of `HeadVersion`,
+    hence the out-of-order indexes."""
     var out = List[HeadVersion]()
     var c = List[Int]()
     for name in [
@@ -156,6 +170,7 @@ def head_version_rows(b: RecordBatch) raises -> List[HeadVersion]:
 
 
 def head_versions_batch(rows: List[HeadVersion]) raises -> RecordBatch:
+    """`rows` as a batch of `mojo.repo_versions`."""
     var s = repo_versions_schema()
     var cs = List[ColumnBuilder]()
     for i in range(9):

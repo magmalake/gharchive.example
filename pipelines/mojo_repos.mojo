@@ -45,6 +45,9 @@ from lake import (
 
 def _known(mut ctx: Ctx, dataset: String) raises -> Dict[String, Bool]:
     """The `repo` values already in one of this step's own tables."""
+    # Read at the table's *current* snapshot, not a pinned one: it has to
+    # include what runs of earlier days (possibly just now) committed, or two
+    # days could both add the same repository.
     var out = Dict[String, Bool]()
     var t = table(ctx, dataset)
     if not t.metadata.has_current_snapshot:
@@ -58,6 +61,8 @@ def _known(mut ctx: Ctx, dataset: String) raises -> Dict[String, Bool]:
 
 @fieldwise_init
 struct _Asked(Copyable, Movable):
+    """The latest thing `mojo.checked` says about a repository."""
+
     var at: Int64
     var pending: Bool
     """The latest answer is `unchecked`: no API budget was left for it."""
@@ -65,7 +70,11 @@ struct _Asked(Copyable, Movable):
 
 
 def _asked(mut ctx: Ctx) raises -> Dict[String, _Asked]:
-    """The latest row of mojo.checked for each repository."""
+    """The latest row of mojo.checked for each repository. The table is an
+    append-only log of answers (a repository can be `unchecked` on one day and
+    `mojo` on a later one), so the newest `checked_at` wins. The row keeps
+    the candidate's signals, first_seen and sha, which is all a later run
+    needs to check a repository that waited, without its day's events."""
     var out = Dict[String, _Asked]()
     var t = table(ctx, CHECKED)
     if not t.metadata.has_current_snapshot:
@@ -96,6 +105,7 @@ def _asked(mut ctx: Ctx) raises -> Dict[String, _Asked]:
 
 
 def _now_micros() raises -> Int64:
+    """The current time in microseconds since the epoch."""
     return now() * 1_000_000
 
 
@@ -104,6 +114,9 @@ def _day_candidates(mut ctx: Ctx, d: Day) raises -> Dict[String, Candidate]:
     `detect.scan_event` merged them over the day's events: signals added in
     the order they were noticed, the earliest `first_seen`, the first
     `sha`."""
+    # The table is partitioned by day on `hour`, so the range filter lets the
+    # scan skip every other day's files. `scan` is orca's: pinned to the
+    # snapshot this step first saw, so a retry sees the same candidates.
     var lo = Int64(days_from_civil(d.year, d.month, d.day)) * 86_400_000_000
     var hi = lo + 86_400_000_000
     var cands = table(ctx, CANDIDATES)
@@ -166,6 +179,8 @@ def _repos_batch(found: List[_Found], known: Dict[String, Bool]) raises -> Tuple
         c_fork.add(Datum.bool_(info.fork))
         c_topics.add(json_strings(info.topics))
         n += 1
+    # `topics` is a list column, so this table's batch is built from column
+    # trees (`NestedBuilder`), not the flat `batch_of` used for the others.
     var trees = List[ColumnTree]()
     for ref c in [c_repo^, c_created^, c_first^, c_found^, c_stars^, c_forks^, c_license^, c_branch^, c_desc^, c_size^, c_lang^, c_fork^]:
         trees.append(c.build_tree())
@@ -174,10 +189,19 @@ def _repos_batch(found: List[_Found], known: Dict[String, Bool]) raises -> Tuple
 
 
 def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
+    """The step: checks the day's new candidates with GitHub, within the API
+    budget, and appends the Mojo repositories to `mojo.repos` and every
+    answer to `mojo.checked`. Returns the number of repositories added.
+
+    Rerunning a day, or running overlapping days, adds nothing twice: a
+    repository already in `mojo.repos`, or already answered, is skipped."""
     var found = _day_candidates(ctx, d)
     ctx.log(String(String(d), ": ", len(found), " candidates"))
 
-    # Leave out what an earlier day already settled.
+    # Leave out what an earlier day already settled: a repository already in
+    # mojo.repos, or one GitHub already answered about (`mojo`, `not mojo`,
+    # `fork` or `gone`, so each repository is asked about once, ever). Only an
+    # `unchecked` answer, which means no budget was left, is asked again.
     var repos_t = ensure_table(ctx, REPOS, repos_schema())
     var checked_t = ensure_table(ctx, CHECKED, checked_schema())
     var known = _known(ctx, REPOS)
@@ -189,17 +213,24 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
         if e.key in asked and not asked[e.key].pending:
             continue
         todo.append(e.value.copy())
-    # Candidates an earlier run had no API budget for, from any day.
+    # Candidates an earlier run had no API budget for, from any day. Their
+    # signals and sha were kept in mojo.checked, so they are checked without
+    # reading the old day's candidates again.
     for e in asked.items():
         if e.value.pending and e.key not in found and e.key not in known:
             todo.append(e.value.candidate.copy())
-    # Strongest signs first.
+    # Strongest signs first (`Candidate.rank`), so that when the budget runs
+    # out it is the weakest guesses (a repository whose name merely contains
+    # "mojo") that wait. An insertion sort: stable, and the list is small.
     for i in range(1, len(todo)):
         var j = i
         while j > 0 and todo[j - 1].rank() > todo[j].rank():
             todo.swap_elements(j - 1, j)
             j -= 1
 
+    # Without a token GitHub allows 60 requests an hour and a check can take
+    # more than one (the repository, then a pushed commit), so 25 candidates
+    # keep a local run under it; a token allows 5000.
     var budget = Int(getenv("MOJO_REPOS_BUDGET", "1000" if getenv("GITHUB_TOKEN") else "25"))
     var cs = checked_schema()
     var k_repo = ColumnBuilder.of(cs, 1)
@@ -213,6 +244,9 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
     var asked_n = 0
     var found_mojo = List[_Found]()
     var added_names = Dict[String, Bool]()
+    # Once `stopped` (budget used up, or GitHub says limited), the loop keeps
+    # going only to write the remaining candidates to mojo.checked as
+    # `unchecked`, so that a later run finds them there.
     var stopped = False
     for ref c in todo:
         var outcome = String("unchecked")
@@ -221,6 +255,8 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
             ctx.log(String("budget of ", budget, " checks used; ", len(todo) - asked_n, " candidates wait"))
             stopped = True
         if not stopped:
+            # A network failure raises and fails the attempt (`retries=1`); a
+            # rate limit is not a failure but a `limited` verdict.
             var v: Verdict
             try:
                 v = verify(c)
@@ -228,18 +264,28 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
                 raise Error(c.repo, ": checking it on GitHub: ", e)
             asked_n += 1
             if v.outcome == "limited":
+                # Not counted as an answer: the candidate stays `unchecked`.
                 ctx.log(String("GitHub rate limit reached after ", asked_n - 1, " checks"))
                 stopped = True
             else:
                 outcome = v.outcome
                 how = v.how
                 ctx.log(String(c.repo, " [", c.signals, "]: ", v.outcome, " ", v.how))
+                # `info.repo` is GitHub's own spelling (`full_name`), which
+                # can differ from the event's after a rename or in case, so
+                # it is checked against `known` again, and against this run's
+                # additions.
                 if v.outcome == "mojo" and v.info.repo not in known and v.info.repo not in added_names:
                     added_names[v.info.repo] = True
                     found_mojo.append(_Found(v.info.copy(), c.copy(), v.how))
+                # `remaining` is GitHub's X-RateLimit-Remaining: stop before
+                # the next call is refused.
                 if v.remaining == 0:
                     ctx.log("GitHub rate limit now 0; the rest wait for a later run")
                     stopped = True
+        # A candidate that was already waiting and still is gets no second
+        # `unchecked` row, so the log doesn't grow by a row per run per
+        # waiting candidate.
         if outcome == "unchecked" and c.repo in asked and asked[c.repo].pending:
             continue  # already waiting
         k_repo.add(Datum.string_(c.repo))
@@ -260,6 +306,8 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
         added = batch[1]
         if added < len(found_mojo):
             ctx.log(String(len(found_mojo) - added, " found repositories were added to mojo.repos meanwhile; left out"))
+        # This snapshot of mojo.repos is what starts mojo_history's and
+        # mojo_versions' runs, for the repositories it adds.
         if added > 0:
             var id = append(ctx, repos_t, [batch[0].copy()])
             ctx.log(String(added, " Mojo repositories added, snapshot ", id))
@@ -268,6 +316,10 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
     return added
 
 
+# `Mapped` runs the step once per partition of a run, here a `Day`. Reads and
+# writes are declared so `orca.tables` can enforce them and the UI can draw
+# the lineage: CANDIDATES is only read (the sensor's dataset), and the two
+# tables are written. `retries=1` re-runs a failed attempt once in the run.
 comptime FindRepos = Step[
     "find_repos",
     Day,
@@ -278,6 +330,10 @@ comptime FindRepos = Step[
     reads=[CANDIDATES],
     writes=[REPOS, CHECKED],
 ]
+# `sensor=True`: no schedule; the scheduler starts a run when gharchive (or
+# gharchive_index) commits a snapshot of `gharchive.candidates`, for the days
+# that snapshot holds. Left at `max_runs=1`, days are checked one at a time,
+# which the `known`/`asked` reads above rely on.
 comptime MojoRepos = Pipeline[
     "mojo_repos",
     FindRepos,

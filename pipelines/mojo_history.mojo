@@ -45,6 +45,12 @@ from lake import (
 )
 
 
+# The dista tasks of this pipeline: functions that run on a worker process.
+# Both take the repository name and return a `History` (errors included, so
+# a task never fails the run); `Tasks[...]` lists them for the runtime orca
+# starts at the beginning of a run, which a step reaches through
+# `ctx.runtime`. A worker does the clone, so the step process never holds a
+# repository.
 comptime ReadHistory = Task[String, History, read_history]
 comptime ReadTags = Task[String, History, read_tags]
 comptime HistoryTasks = Tasks[ReadHistory, ReadTags]
@@ -53,6 +59,9 @@ comptime HistoryTasks = Tasks[ReadHistory, ReadTags]
 def _sizes(mut ctx: Ctx) raises -> Dict[String, Int64]:
     """`size_kb` of every repository in mojo.repos, at the step's pinned
     snapshot (a declared read, so lineage runs back to gharchive.events)."""
+    # `table` and `scan` (unlike a plain `t.scan()`) go through orca: the
+    # scan is pinned to the snapshot the step first read, so a retry sees the
+    # same repositories, and the dataset is checked against `reads=`.
     var out = Dict[String, Int64]()
     var t = table(ctx, REPOS)
     for b in scan(ctx, t).select(["repo", "size_kb"]).to_batches():
@@ -68,6 +77,8 @@ def _commits_of(
 ) raises -> Dict[String, Tuple[String, String]]:
     """sha -> (tooling, Mojo version) of the commits mojo.commits has for
     `repos`, for the tags of repositories read before tags were."""
+    # Only needed when some repository has commits but no tags: the tags'
+    # tooling and version are looked up by sha instead of re-reading history.
     var out = Dict[String, Tuple[String, String]]()
     if len(repos) == 0:
         return out^
@@ -92,7 +103,9 @@ def _commits_of(
 
 
 def _done(mut ctx: Ctx, dataset: String = COMMITS) raises -> Dict[String, Bool]:
-    """Repositories mojo.commits (or `dataset`) already has."""
+    """Repositories mojo.commits (or `dataset`) already has. This reads the
+    table's current snapshot: it is how a rerun knows what not to write
+    again, since appending a repository twice would duplicate its rows."""
     var out = Dict[String, Bool]()
     var t = table(ctx, dataset)
     if not t.metadata.has_current_snapshot:
@@ -104,14 +117,27 @@ def _done(mut ctx: Ctx, dataset: String = COMMITS) raises -> Dict[String, Bool]:
 
 
 def histories(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
+    """The step: reads the history of each repository in `keys` (up to 50,
+    the run's keys) and appends the new rows, one snapshot a table. Returns
+    the number of commits appended.
+
+    A repository falls in one of three groups, decided by what the tables
+    already hold: both commits and tags (skipped); commits but no tags
+    (`tags_only`, read by the cheaper `read_tags`); neither (a full
+    `read_history`). A repository that failed has no rows, so the next run
+    over it tries it again."""
     var commits_t = ensure_table(ctx, COMMITS, commits_schema())
     var migrations_t = ensure_table(ctx, MIGRATIONS, migrations_schema())
     var tags_t = ensure_table(ctx, TAGS, tags_schema())
     var sizes = _sizes(ctx)
     var done = _done(ctx)
     var tagged = _done(ctx, TAGS)
+    # 0 means no limit; local runs set it to skip modular/modular.
     var max_kb = Int64(Int(getenv("MOJO_HISTORY_MAX_KB", "0")))
     ref rt = ctx.runtime[HistoryTasks]()
+    # Every task is started before any result is read. Only as many clones
+    # run at once as there are dista workers; the rest wait for a free
+    # worker. `refs[i]` stays aligned with `names[i]`.
     var names = List[String]()
     var refs = List[ObjectRef[History]]()
     var tags_only = List[String]()
@@ -131,6 +157,10 @@ def histories(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
         else:
             refs.append(rt.remote[ReadHistory](repo))
     var known_commits = _commits_of(ctx, tags_only)
+    # Column builders for all three tables, filled as results arrive and
+    # appended once below: a run is one snapshot per table, however many
+    # repositories it read. (`ColumnBuilder.of(schema, n)` is the column
+    # with field id n.)
     var ts_ = tags_schema()
     var t_repo = ColumnBuilder.of(ts_, 1)
     var t_tag = ColumnBuilder.of(ts_, 2)
@@ -160,8 +190,11 @@ def histories(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
     var failed = 0
     var first_error = String()
     for i in range(len(refs)):
+        # `get` waits for the task; `release` frees its result on the worker.
         var h = rt.get(refs[i])
         rt.release(refs[i])
+        # A repository that is gone, private or unparseable is logged and
+        # left out; it doesn't fail the run (see the end of the step).
         if h.error.byte_length() > 0:
             ctx.log(String(names[i], ": ", h.error))
             if not first_error:
@@ -171,6 +204,9 @@ def histories(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
         var tags = List[TagRow]()
         for ref t in h.tags.items:
             tags.append(t.copy())
+        # A history read earlier isn't read again, so its tags have no commit
+        # rows from this task to take tooling and version from: use the ones
+        # already in mojo.commits.
         if names[i] in done:
             join_tags(tags, known_commits)
         if names[i] not in tagged:
@@ -209,6 +245,9 @@ def histories(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
             m_kind.add(Datum.string_(m.kind))
             m_from.add(str_or_null(m.from_value))
             m_to.add(str_or_null(m.to_value))
+    # `append` is orca's: it records the step, run and attempt in the
+    # snapshot's summary, and a retry that finds its own earlier commit
+    # returns it instead of appending again.
     var n = len(c_repo)
     if n > 0:
         _ = append(ctx, commits_t, [batch_of([c_repo^, c_sha^, c_at^, c_seq^, c_lines^, c_files^, c_tool^, c_ver^, c_src^])])
@@ -221,6 +260,9 @@ def histories(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
         len(refs), " repositories read (", len(tags_only), " for tags only, ",
         failed, " failed), ", n, " commits, ", n_tags, " tags",
     ))
+    # Some failures are normal (a deleted repository, a clone timeout). All of
+    # them is not: that points at something shared (git, the network, the
+    # disk), so fail the run and let `retries` and the scheduler try again.
     if failed > 0 and failed == len(refs):
         raise Error(
             "every repository in this run failed (", failed, "); the first, ",
@@ -229,6 +271,11 @@ def histories(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
     return n
 
 
+# `Gather` runs the step once per run with all the run's keys as a `Seq`
+# (a `Mapped` step runs once per partition). Here the keys are repository
+# names, and one run reads up to `keys_per_run` of them. `reads` and `writes`
+# are enforced by `orca.tables` and give the lineage the UI draws: REPOS is
+# read only, which is what makes this a sensor on it.
 comptime Histories = Step[
     "histories",
     Seq[Name],
@@ -239,6 +286,14 @@ comptime Histories = Step[
     reads=[REPOS],
     writes=[COMMITS, MIGRATIONS, TAGS],
 ]
+# `Keyed` partitions are names read from a column of a dataset (the distinct
+# `repo` values of the current `mojo.repos`), not a calendar. `sensor=True`:
+# when a run of another pipeline commits a snapshot of a dataset this one
+# reads and doesn't write (mojo.repos), the scheduler starts a run over the
+# keys that snapshot added. `workers=4` sizes the dista cluster a run gets on
+# Kubernetes (locally orca forks `ORCA_WORKERS`); how many clones run at once
+# on the Hetzner server is `DISTA_WORKER_SLOTS` in orca.toml. `max_runs` stays
+# at its default of 1: one run at a time.
 comptime MojoHistory = Pipeline[
     "mojo_history",
     Histories,

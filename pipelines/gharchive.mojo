@@ -66,7 +66,9 @@ from reindex import index_hour, index_job
 
 
 def hour_task(day: String, hour: Int) raises -> DataFiles:
-    """On a worker: the hour, written into the tables but not committed."""
+    """On a worker: the hour, written into the tables but not committed.
+    The event files and the hour's three index files come back as entries
+    (`DataFiles`), which the step commits; nothing else crosses back."""
     try:
         return fetch_hour(
             day,
@@ -80,6 +82,14 @@ def hour_task(day: String, hour: Int) raises -> DataFiles:
         raise Error(day, " hour ", hour, ": ", e)
 
 
+# A dista `Task` is a function that runs on a worker process (`Task2` takes
+# two arguments). The step starts them with `rt.remote[...]`, which returns an
+# `ObjectRef`: a future for the result, read with `rt.get`. `Hour` is the
+# main one, a download and parse of one hour; `IndexHour` rebuilds an hour's
+# index files from `gharchive.events` when a retry skipped it; `MergeHours`
+# writes a day's `repo_hour` files as one. `Tasks[...]` lists them all, and
+# orca starts one dista runtime for the run before its first step, which the
+# step reaches through `ctx.runtime`.
 comptime IndexHour = Task[String, IndexFiles, index_hour]
 comptime Hour = Task2[String, Int, DataFiles, hour_task]
 comptime MergeHours = Task[String, IndexFiles, merge_repo_hour]
@@ -89,12 +99,18 @@ comptime GhTasks = Tasks[Hour, IndexHour, MergeHours]
 def _marker_if_empty(
     mut files: List[DataFile], day: String, which: Int, t: Table
 ) raises:
-    """A day with no rows for `t` at all: its commit needs a file."""
+    """A day with no rows for `t` at all: its commit needs a file, since a
+    snapshot needs one, so it gets the marker row `hourindex.HourIndex`
+    describes."""
     if len(files) == 0:
         files = write_marker(days_of(day) * 86_400_000_000, which, t).files.copy()
 
 
 def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
+    """The step: one day of GH Archive into the four tables. Hours are read
+    on workers, `window` at a time, and committed here in hour order.
+    Returns the number of events committed by this attempt (a retry that
+    skipped hours counts only the rest)."""
     var day = String(d)
     var hours = parse_hours(getenv("GHARCHIVE_HOURS"))
     var props = index_properties()
@@ -115,6 +131,10 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
         ctx, GH_RELEASES, gh_releases_schema(), gh_releases_spec(), props
     )
     ref rt = ctx.runtime[GhTasks]()
+    # Hours in flight at once. Memory is what limits it: an hour in flight
+    # takes about 2 GB (magmalake/mojo-census#37, not yet explained or
+    # bounded), so the default of 16 is sized for several machines; orca.toml
+    # sets 2 for the 8 GB Hetzner server.
     var window = max(1, Int(getenv("GHARCHIVE_PARALLEL", "16")))
 
     # Hours an earlier attempt of this step already committed to the events
@@ -178,6 +198,11 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
             Int(perf_counter_ns() - t_re) // 1_000_000, " ms",
         ))
 
+    # A sliding window of futures: start `window` hours, then each time the
+    # oldest finishes (`rt.get`) and is released (`rt.release` frees its
+    # result on the worker), start the next one. Results are consumed in hour
+    # order because the commits must be, so a slow hour holds up the commit of
+    # the later ones (their tasks keep running meanwhile).
     var refs = List[ObjectRef[DataFiles]]()
     var next = d_ev
     while next < len(hours) and next - d_ev < window:
@@ -192,6 +217,8 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
         if next < len(hours):
             refs.append(rt.remote[Hour](day, hours[next]))
             next += 1
+        # One snapshot of the events per hour: the first one of a rerun
+        # replaces the day's old files, a retry's recommit is recognised.
         var t0 = perf_counter_ns()
         var id: Int64
         try:
@@ -264,6 +291,13 @@ def load_day(mut ctx: Ctx, d: Day) raises -> Int64:
     return rows
 
 
+# A `Step` wraps `load_day` with its name, input and output types and kind.
+# `Mapped` runs it once per partition of a run, here a `Day`. `writes` lists
+# the datasets it commits to (a commit to any other is refused, and the
+# lineage in the UI is drawn from it); the replace-the-day logic is done by
+# hand in `indexing.commit_hour` rather than by orca's `replaces=`. `retries=2`
+# re-runs a failed attempt in the same run, which the commit recognition
+# above makes cheap.
 comptime LoadDay = Step[
     "load_day",
     Day,
@@ -273,6 +307,10 @@ comptime LoadDay = Step[
     retries=2,
     writes=[EVENTS, CANDIDATES, REPO_HOUR, GH_RELEASES],
 ]
+# `Daily["2023-01-01"]` makes the partitions days from that date; the `Cron`
+# schedule fires the day's run, and the pipeline is not a sensor, so it is the
+# root of the chain: mojo_repos and mojo_activity are sensors on what it
+# commits.
 comptime GhArchive = Pipeline[
     "gharchive",
     LoadDay,

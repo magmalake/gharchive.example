@@ -34,6 +34,8 @@ from lake import (
 
 @fieldwise_init
 struct ActivityRow(Copyable, Movable):
+    """One repository's counts on one day: a row of `mojo.activity`."""
+
     var repo: String
     var day: Int64
     """Days since 1970-01-01."""
@@ -49,6 +51,8 @@ struct ActivityRow(Copyable, Movable):
 
 @fieldwise_init
 struct ReleaseRow(Copyable, Movable):
+    """One published release: a row of `mojo.releases`."""
+
     var repo: String
     var day: Int64
     var tag: String
@@ -60,7 +64,8 @@ struct ReleaseRow(Copyable, Movable):
 
 @fieldwise_init
 struct DayActivity(Copyable, Movable):
-    """What a day's task sends back."""
+    """What a day's task sends back. A plain struct of `Seq`s, which dista
+    sends by reflection."""
 
     var day: Int64
     var rows: Seq[ActivityRow]
@@ -71,7 +76,9 @@ struct DayActivity(Copyable, Movable):
 
 
 struct Acc(Copyable, Movable):
-    """One repository's counts on one day so far."""
+    """One repository's counts on one day so far. The distinct actors are a
+    set because an actor repeats across hours (`repo_hour` has a row per
+    actor and hour); `finish` puts its size in the row's `actors`."""
 
     var row: ActivityRow
     var actors: Dict[String, Bool]
@@ -82,6 +89,7 @@ struct Acc(Copyable, Movable):
 
 
 def _action(p: Span[UInt8, _]) -> String:
+    """The `action` field of an event payload (`opened`, `published`, ...)."""
     return text(p, field(p, Range(0, len(p)), "action"))
 
 
@@ -116,7 +124,9 @@ def add_event(
     actor: String,
     payload: Span[UInt8, _],
 ):
-    """Counts one event of the repository `acc` is for."""
+    """Counts one event of the repository `acc` is for. Stars are
+    WatchEvents (GitHub's name for starring), and an issue or pull request
+    counts only when it is `opened`, not for each comment or label."""
     acc.row.events += 1
     if actor.byte_length() > 0:
         acc.actors[actor] = True
@@ -140,7 +150,8 @@ def add_event(
 
 
 def finish(var accs: Dict[String, Acc]) -> List[ActivityRow]:
-    """The rows, by repository name."""
+    """The rows, by repository name (sorted, so the same input always gives
+    the same rows whatever order the `Dict` iterates in)."""
     var out = List[ActivityRow]()
     for e in accs.items():
         var row = e.value.row.copy()
@@ -162,7 +173,10 @@ def fold_hours(
 ) raises:
     """Adds a batch of `gharchive.repo_hour` rows of `repos` (columns repo,
     actor, events, stars, forks, releases, issues_opened, prs_opened,
-    pushes): the counts `add_event` makes from the events themselves."""
+    pushes): the counts `add_event` makes from the events themselves. Each
+    row is one (repository, actor, hour), so the counts add up and the actor
+    joins the set. The scan's filter keeps whole row groups, so rows of other
+    repositories still arrive and are dropped here."""
     ref rp = b.column(col(b, "repo"))
     ref ac = b.column(col(b, "actor"))
     ref ev = b.column(col(b, "events"))
@@ -195,7 +209,9 @@ def encode_job(
     day: String, hours: Int64, releases: Int64, repos: List[String]
 ) -> String:
     """A day's task argument: the day, the snapshots of `gharchive.repo_hour`
-    and `gharchive.releases`, the repositories."""
+    and `gharchive.releases`, the repositories. One string, a line each, which
+    `day_activity` takes apart again. A negative snapshot means the table has
+    none."""
     var s = String(day, "\n", hours, "\n", releases)
     for r in repos:
         s += "\n"
@@ -204,6 +220,8 @@ def encode_job(
 
 
 def _in_filter(column: String, repos: Dict[String, Bool]) -> String:
+    """An `["in", column, [...]]` row filter of the repositories, in
+    iceberg's JSON filter syntax."""
     var s = String('["in","', column, '",[')
     var first = True
     for e in repos.items():
@@ -231,11 +249,18 @@ def day_activity(job: String) raises -> DayActivity:
     var accs = Dict[String, Acc]()
     var releases = List[ReleaseRow]()
     var scanned = 0
+    # The day's time range with `@` for the column, since the two tables
+    # name it differently (`hour` in repo_hour, `created_at` in releases).
     var within = String(
         '["and",[">=","', "@", '","', day, 'T00:00:00Z"],',
         '["<","', "@", '","', day_text(d + 1), 'T00:00:00Z"]]',
     )
     try:
+        # On a worker there is no `Ctx`: the table is loaded by dataset name
+        # and read at the snapshot the step pinned. `repo_hour` is partitioned
+        # by day and sorted by repository, so the day and `in` filters let
+        # the scan read only the few row groups where these repositories are,
+        # not the ~100K rows an hour of every repository.
         var hours = load_dataset(REPO_HOUR)
         var by_repo = _in_filter("repo", repos)
         var filter = String(
@@ -258,6 +283,8 @@ def day_activity(job: String) raises -> DayActivity:
             var b = next.take()
             scanned += b.num_rows
             fold_hours(b, d, repos, accs)
+        # The same day and repository filter on the releases, unless the
+        # table has no snapshot yet.
         if releases_snapshot >= 0:
             var rels = load_dataset(GH_RELEASES)
             var rfilter = String(
@@ -295,6 +322,7 @@ def day_activity(job: String) raises -> DayActivity:
                     )
     except e:
         raise Error(day, ": reading ", REPO_HOUR, ": ", e)
+    # `Seq` is dista's sendable list, so the results can cross to the step.
     var rows = Seq[ActivityRow]()
     for ref r in finish(accs^):
         rows.append(r.copy())
@@ -310,6 +338,7 @@ def day_activity(job: String) raises -> DayActivity:
 
 
 def activity_rows(b: RecordBatch) raises -> List[ActivityRow]:
+    """The rows of a scanned `mojo.activity` batch (`day` is a `date`)."""
     var out = List[ActivityRow]()
     var c = List[Int]()
     for name in [
@@ -336,6 +365,7 @@ def activity_rows(b: RecordBatch) raises -> List[ActivityRow]:
 
 
 def activity_batch(rows: List[ActivityRow]) raises -> RecordBatch:
+    """`rows` as a batch of `mojo.activity`."""
     var s = activity_schema()
     var cs = List[ColumnBuilder]()
     for i in range(10):
@@ -355,6 +385,7 @@ def activity_batch(rows: List[ActivityRow]) raises -> RecordBatch:
 
 
 def release_rows(b: RecordBatch) raises -> List[ReleaseRow]:
+    """The rows of a scanned `mojo.releases` batch."""
     var out = List[ReleaseRow]()
     var c = List[Int]()
     for name in ["repo", "day", "tag", "name", "published_at", "prerelease", "actor"]:
@@ -375,6 +406,7 @@ def release_rows(b: RecordBatch) raises -> List[ReleaseRow]:
 
 
 def releases_batch(rows: List[ReleaseRow]) raises -> RecordBatch:
+    """`rows` as a batch of `mojo.releases`."""
     var s = releases_schema()
     var cs = List[ColumnBuilder]()
     for i in range(7):

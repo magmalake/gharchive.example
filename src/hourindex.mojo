@@ -38,6 +38,7 @@ from lake import (
 )
 
 comptime HOUR_MICROS: Int64 = 3_600_000_000
+"""An hour in microseconds, the unit of every timestamp in the tables."""
 
 
 @fieldwise_init
@@ -58,6 +59,9 @@ struct Cell(Copyable, Movable):
 
 @fieldwise_init
 struct ReleaseEvent(Copyable, Movable):
+    """One published release, as a row of `gharchive.releases`: when the
+    event happened (`at`) and when the release was published."""
+
     var repo: String
     var at: Int64
     var actor: String
@@ -68,10 +72,16 @@ struct ReleaseEvent(Copyable, Movable):
 
 
 def _action_is(p: Span[UInt8, _], want: StringSlice) -> Bool:
+    """Whether the payload's `action` is `want`."""
     return text(p, field(p, Range(0, len(p)), "action")) == want
 
 
 struct HourIndex(Movable):
+    """The three summaries of one hour, filled by `add` as the events are
+    parsed and turned into batches by the `*_batch` methods. `at` and
+    `cells` together are a hash map with stable positions: `at` finds a
+    cell's place by its key and `cells` keeps them in insertion order."""
+
     var found: Dict[String, Candidate]
     """Candidates by repository, in the order they were first noticed."""
     var at: Dict[String, Int]
@@ -86,6 +96,8 @@ struct HourIndex(Movable):
     retry's numbering aligned. Nothing matches that row."""
 
     def __init__(out self, marker: Int64 = 0):
+        """`marker` of 0 writes no marker rows (gharchive's hour tasks, which
+        leave a day's empty tables to `write_marker`)."""
         self.marker = marker
         self.found = Dict[String, Candidate]()
         self.at = Dict[String, Int]()
@@ -105,6 +117,11 @@ struct HourIndex(Movable):
         self.events += 1
         scan_event(self.found, type, repo, at, payload)
         var hour = at - at % HOUR_MICROS
+        # One cell per (repository, actor, hour), which is the grain of
+        # `repo_hour`: keeping the actor lets mojo_activity count distinct
+        # actors over a day. The key joins the parts with an ASCII unit
+        # separator, which can't occur in a name, and sorts the same way as
+        # (repo, actor, hour) in `repo_hour_batch`.
         var key = String(repo, "\x1f", actor, "\x1f", hour)
         var i: Int
         if key in self.at:
@@ -123,6 +140,9 @@ struct HourIndex(Movable):
             c.forks += 1
         elif type == "PushEvent":
             c.pushes += 1
+        # Issues and pull requests count only when opened, as in
+        # `activity.add_event` (the two must agree: mojo_activity reads these
+        # counts in place of the events).
         elif type == "IssuesEvent":
             if _action_is(payload, "opened"):
                 c.issues_opened += 1
@@ -197,6 +217,7 @@ struct HourIndex(Movable):
         return batch_of(cs)
 
     def releases_batch(self) raises -> RecordBatch:
+        """One row per published ReleaseEvent, in the order seen."""
         var s = gh_releases_schema()
         var cs = List[ColumnBuilder]()
         for i in range(7):
@@ -222,7 +243,8 @@ struct HourIndex(Movable):
 
 struct IndexFiles(Copyable, Movable):
     """An hour's index files, written but not committed: a plain struct for
-    dista's reflection, the `FileEntries` through their own `Codec`."""
+    dista's reflection, the `FileEntries` through their own `Codec`. Also
+    the answer of the day-level merge task, which fills only `repo_hour`."""
 
     var candidates: FileEntries
     var repo_hour: FileEntries
@@ -243,7 +265,8 @@ struct IndexFiles(Copyable, Movable):
 
 
 def _write(table: Table, var batch: RecordBatch) raises -> FileEntries:
-    """A batch into a table's data files, uncommitted."""
+    """A batch into a table's data files, uncommitted. An empty batch writes
+    no file."""
     var w = FileWriter(table)
     if batch.num_rows > 0:
         w.put(batch^)
@@ -256,6 +279,8 @@ def write_index(
     """On a worker: the hour's three summaries into their tables."""
     var t0 = perf_counter_ns()
     var out = IndexFiles()
+    # The files are written into each table's own `data/` on the worker, and
+    # only their entries travel back; the step commits them.
     var cb = index.candidate_batch()
     out.candidate_rows = cb.num_rows
     out.candidates = _write(candidates, cb^)
@@ -286,6 +311,9 @@ def candidates_from(batches: List[RecordBatch]) raises -> Dict[String, Candidate
     first_seen, sha), merged the way `detect.scan_event` merges them over a
     day's events: signals added in the order they were noticed, the earliest
     `first_seen`, the first `sha`."""
+    # Rows of all the batches are gathered first and then replayed through
+    # `note` in event order, which is what makes the result equal to what
+    # `scan_event` produced over the original events.
     var repos = List[String]()
     var reasons = List[String]()
     var seen = List[Int64]()
@@ -300,7 +328,9 @@ def candidates_from(batches: List[RecordBatch]) raises -> Dict[String, Candidate
             reasons.append(str_at(b.column(c_reason), r))
             seen.append(i64_at(b.column(c_seen), r))
             shas.append(str_at(b.column(c_sha), r))
-    # Event order: by first_seen (ms), then as the rows were read.
+    # Event order: by first_seen (ms), then as the rows were read. Each key
+    # packs the millisecond into the high bits and the row number (20 bits)
+    # into the low ones, so one sort of integers does both.
     var keys = List[Int64]()
     for i in range(len(repos)):
         keys.append(((seen[i] // 1000) << 20) | Int64(i & 0xFFFFF))

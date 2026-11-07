@@ -32,12 +32,22 @@ from historyrows import head_version_rows, head_versions_batch
 from lake import REPOS, REPO_VERSIONS, repo_versions_schema
 from replace import replace_files
 
+# A dista `Task` runs on a worker process: it clones one repository and
+# returns a `HeadVersion` (with `error` set rather than raising, so one bad
+# repository doesn't fail the run). `Tasks[...]` lists the tasks whose
+# runtime orca starts for a run; the step reaches it with `ctx.runtime`.
 comptime ReadHead = Task[String, HeadVersion, read_head_version]
 comptime VersionTasks = Tasks[ReadHead]
 
 
 def versions(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
+    """The step: reads the HEAD of each repository in `keys` (up to 50) and
+    replaces those repositories' rows of `mojo.repo_versions` in one
+    snapshot. Returns the number of repositories read."""
     var t = ensure_table(ctx, REPO_VERSIONS, repo_versions_schema())
+    # Read the table's current rows, and the data files they are in. The
+    # unpartitioned table is rewritten whole: every row of a repository not
+    # in this run is kept (`old`), and every file is removed (`files`).
     var old = List[HeadVersion]()
     var files = List[String]()
     var file_rows = Int64(0)
@@ -48,10 +58,15 @@ def versions(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
         for b in scan(ctx, t).to_batches():
             for ref r in head_version_rows(b):
                 old.append(r.copy())
+        # Cross-check, because the commit below *removes* every file: if the
+        # rows read don't add up to what the files' metadata says, some were
+        # not read, and removing the files would lose them.
         if Int64(len(old)) != file_rows:
             raise Error(
                 REPO_VERSIONS, ": read ", len(old), " rows but its files hold ", file_rows,
             )
+    # All tasks are started, then collected in order; only as many clones run
+    # at once as there are dista workers.
     ref rt = ctx.runtime[VersionTasks]()
     var names = List[String]()
     var refs = List[ObjectRef[HeadVersion]]()
@@ -62,11 +77,15 @@ def versions(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
     var fresh = Dict[String, HeadVersion]()
     var failed = 0
     var found = 0
+    # `read_at` is stamped here, once for the run, in microseconds, not on
+    # the worker.
     var now = now() * 1_000_000
     for i in range(len(refs)):
         var h = rt.get(refs[i])
         rt.release(refs[i])
         if h.error.byte_length() > 0:
+            # Not in `fresh`, so the merge below keeps the row it had (if
+            # any); a repository that has none is tried again in a later run.
             ctx.log(String(names[i], ": kept as it was (", h.error, ")"))
             failed += 1
             continue
@@ -79,12 +98,19 @@ def versions(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
             h.estimate if h.estimate else "-",
         ))
         fresh[names[i]] = h^
+    # The new table contents: the old rows of the other repositories, then
+    # the fresh rows. A repository in this run appears once whether or not
+    # it had a row, which is why a rerun gives the same rows.
     var out = List[HeadVersion]()
     for ref r in old:
         if r.repo not in fresh:
             out.append(r.copy())
     for e in fresh.items():
         out.append(e.value.copy())
+    # One `overwrite` snapshot removing `files` and adding `out` (see
+    # `replace.replace_files`; a retry finds the commit its first attempt
+    # made). It is safe only because one run writes this table at a time
+    # (`max_runs` is left at its default of 1).
     var id = replace_files(ctx, t, files, [head_versions_batch(out)])
     ctx.log(String(
         len(fresh), " repositories read (", failed, " kept as they were), ",
@@ -96,6 +122,10 @@ def versions(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
     return len(fresh)
 
 
+# `Gather` runs the step once per run, with all the run's keys (repository
+# names) as a `Seq`. `reads` includes REPO_VERSIONS because the step reads
+# the old rows to keep them, as well as writing it; REPOS is read only,
+# which is what makes the pipeline a sensor on it.
 comptime Versions = Step[
     "versions",
     Seq[Name],
@@ -106,6 +136,9 @@ comptime Versions = Step[
     reads=[REPOS, REPO_VERSIONS],
     writes=[REPO_VERSIONS],
 ]
+# `Keyed` partitions are names read from a column of a dataset, here the
+# `repo` values of `mojo.repos`; `sensor=True` starts a run over the keys a
+# new snapshot of a dataset the pipeline reads (mojo.repos) added.
 comptime MojoVersions = Pipeline[
     "mojo_versions",
     Versions,

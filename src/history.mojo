@@ -20,6 +20,11 @@ from versions import lock_version, manifest_version, tooling
 
 @fieldwise_init
 struct CommitRow(Copyable, Movable):
+    """One commit of the first-parent history, as a row of `mojo.commits`:
+    the totals of Mojo lines and files *after* it, and the tooling and Mojo
+    version in force at it (carried forward from earlier commits when this
+    one touched no manifest)."""
+
     var repo: String
     var sha: String
     var committed_at: Int64
@@ -34,6 +39,9 @@ struct CommitRow(Copyable, Movable):
 
 @fieldwise_init
 struct MigrationRow(Copyable, Movable):
+    """One change of tooling or of Mojo version, as a row of
+    `mojo.migrations`, recorded at the commit that made it."""
+
     var repo: String
     var sha: String
     var committed_at: Int64
@@ -45,6 +53,8 @@ struct MigrationRow(Copyable, Movable):
 
 @fieldwise_init
 struct TagRow(Copyable, Movable):
+    """One git tag, as a row of `mojo.tags`."""
+
     var repo: String
     var tag: String
     """The name under `refs/tags/`."""
@@ -61,6 +71,11 @@ struct TagRow(Copyable, Movable):
 
 @fieldwise_init
 struct History(Copyable, Movable):
+    """What a dista task returns for one repository. A plain struct of
+    `Seq`s so dista can send it by reflection. Failures travel in `error`
+    rather than as an exception, so one bad repository doesn't fail the
+    other 49 of its run."""
+
     var repo: String
     var error: String
     """Empty when the history was read."""
@@ -70,6 +85,7 @@ struct History(Copyable, Movable):
 
     @staticmethod
     def empty(repo: String) -> Self:
+        """A history with no rows and no error."""
         return Self(
             repo, String(), Seq[CommitRow](), Seq[MigrationRow](), Seq[TagRow]()
         )
@@ -87,6 +103,8 @@ def parse_tags(repo: String, output: String) -> List[TagRow]:
     name. Lines that don't have the five fields are skipped."""
     var rows = List[TagRow]()
     for line in output.split("\n"):
+        # An annotated tag is its own object (`tag`) that points at a commit
+        # (`%(*objectname)`); a lightweight tag is the commit itself.
         var f = line.split("\t")
         if len(f) != 5:
             continue
@@ -104,6 +122,8 @@ def parse_tags(repo: String, output: String) -> List[TagRow]:
         except:
             at = 0
         rows.append(TagRow(repo, tag, target, annotated, at, String(), String()))
+    # An insertion sort by name, so a repository's tags always come out in
+    # the same order whatever order git listed them in.
     for i in range(1, len(rows)):
         var j = i
         while j > 0 and rows[j - 1].tag > rows[j].tag:
@@ -123,6 +143,8 @@ def join_tags(mut tags: List[TagRow], commits: Dict[String, Tuple[String, String
 
 
 def _read_tags(repo: String, dir: String, mut out: History) raises:
+    """Appends the clone's tags to `out.tags`, each with the tooling and
+    Mojo version of the commit it points at when `out.commits` has it."""
     var r = _sh(String(
         "git -C '", dir, "' for-each-ref --format='", TAG_FORMAT, "' refs/tags",
     ))
@@ -139,7 +161,8 @@ def _read_tags(repo: String, dir: String, mut out: History) raises:
 
 def safe_repo(repo: String) -> Bool:
     """`owner/name` with GitHub's characters only, safe to put in a shell
-    command."""
+    command (repository names reach `sh -c` in `_sh`, so nothing else may
+    pass)."""
     var slashes = 0
     for c in repo.as_bytes():
         if c == UInt8(ord("/")):
@@ -167,6 +190,7 @@ def is_bazel_file(path: StringSlice) -> Bool:
 
 
 def is_mojo_file(path: StringSlice) -> Bool:
+    """Whether `path` is Mojo source, in either extension."""
     return path.endswith(".mojo") or path.endswith(".🔥")
 
 
@@ -185,6 +209,7 @@ def _sh(cmd: String) raises -> Tuple[Int, String]:
 
 
 def _show(dir: String, sha: String, file: String) raises -> String:
+    """The contents of `file` at `sha`, or "" if it isn't there."""
     var r = _sh(String("git -C '", dir, "' show '", sha, ":", file, "' 2>/dev/null"))
     if r[0] != 0:
         return String()
@@ -192,6 +217,14 @@ def _show(dir: String, sha: String, file: String) raises -> String:
 
 
 struct _State:
+    """The commit being read, and what is true after it: which manifest
+    and lock files exist (`pixi_toml` ... `bazel`), the running totals of
+    Mojo `lines` and `files`, and the `tool`, `version` and `source` in
+    force. Totals and files are carried from commit to commit; `_finish`
+    turns the state into a row. `touched` is whether this commit added,
+    removed or changed a manifest or lock file, which is the only time
+    the version is read again."""
+
     var pixi_toml: Bool
     var pixi_lock: Bool
     var mojoproject: Bool
@@ -224,6 +257,8 @@ struct _State:
         self.files = 0
 
     def mark(mut self, path: String, exists: Bool):
+        """Records that `path` now exists (or no longer does), if it is a
+        file that decides the tooling or the version."""
         if path == "pixi.toml":
             self.pixi_toml = exists
         elif path == "pixi.lock":
@@ -241,7 +276,9 @@ struct _State:
 
 
 def _version(dir: String, sha: String, st: _State) raises -> Tuple[String, String]:
-    """The Mojo version at `sha` and where it came from."""
+    """The Mojo version at `sha` and the file it came from, or two empty
+    strings. Lock files win over manifests: a lock names the version that
+    was actually resolved, a manifest only the range asked for."""
     for lock in ["magic.lock", "pixi.lock"]:
         if (lock == "magic.lock" and st.magic_lock) or (
             lock == "pixi.lock" and st.pixi_lock
@@ -267,6 +304,9 @@ def _finish(repo: String, dir: String, mut st: _State, mut out: History) raises:
         st.pixi_toml, st.pixi_lock, st.mojoproject, st.magic_lock, st.bazel
     )
     if st.touched:
+        # Only a commit that touches a manifest costs `git show`s. A manifest
+        # that names no version (yet) leaves the earlier version standing; the
+        # version is cleared only when no manifest or lock file is left.
         var v = _version(dir, st.sha, st)
         var any_file = st.pixi_toml or st.pixi_lock or st.mojoproject or st.magic_lock
         if v[0].byte_length() > 0 or not any_file:
@@ -307,6 +347,12 @@ def _path_of(line: StringSlice) -> String:
 
 
 def _parse_log(repo: String, dir: String, log: String, mut out: History) raises:
+    """Turns the `git log` of `_read_history` into `out.commits` and
+    `out.migrations`. Per commit git prints the `@@sha time` header, then
+    its `--numstat` lines (`added<TAB>deleted<TAB>path`), then its
+    `--summary` lines (` create mode ...` / ` delete mode ...`). A commit is
+    therefore complete only when the next header (or the end) arrives, which
+    is when `_finish` writes its row."""
     var st = _State()
     for line in log.split("\n"):
         if line.startswith("@@"):
@@ -315,6 +361,9 @@ def _parse_log(repo: String, dir: String, log: String, mut out: History) raises:
             st.sha = String(parts[0])
             st.at = Int64(Int(parts[1])) * 1_000_000 if len(parts) > 1 else 0
             continue
+        # Files are counted from the summary (with `--no-renames` a rename is
+        # a delete plus a create) and lines from numstat, so both follow the
+        # running totals without ever listing a tree.
         if line.startswith(" create mode "):
             var p = _path_of(line)
             if is_mojo_file(p):
@@ -330,6 +379,7 @@ def _parse_log(repo: String, dir: String, log: String, mut out: History) raises:
         var cols = line.split("\t")
         if len(cols) == 3:
             var p = String(cols[2])
+            # Binary files print "-" for both counts.
             if is_mojo_file(p) and String(cols[0]) != "-":
                 st.lines += Int64(Int(cols[0])) - Int64(Int(cols[1]))
             if p == "pixi.toml" or p == "pixi.lock" or p == "mojoproject.toml" or p == "magic.lock":
@@ -384,14 +434,19 @@ def read_tags(repo: String) raises -> History:
 
 
 def _workdir() -> String:
+    """Where clones go: each is deleted after it is read."""
     return getenv("MOJO_HISTORY_WORKDIR", String(getenv("TMPDIR", "/tmp"), "/mojo_history"))
 
 
 def _clone_dir(repo: String) -> String:
+    """`owner/name` as one directory name, `owner__name.git`."""
     return String(_workdir(), "/", repo.replace("/", "__"), ".git")
 
 
 def _read_history(repo: String, mut out: History) raises:
+    """`read_history` without the error handling: failures that git reports
+    are put in `out.error`. The clone is bare (no checkout: manifests are read
+    with `git show`) and is removed before returning."""
     if not safe_repo(repo):
         out.error = String("not a repository name: ", repo)
         return
@@ -408,6 +463,10 @@ def _read_history(repo: String, mut out: History) raises:
         out.error = String("git clone failed: ", clone[1].strip())
         _ = _sh(String("rm -rf '", dir, "'"))
         return
+    # `--first-parent --diff-merges=first-parent` follows the default branch
+    # only, with a merge shown as its diff against the first parent: a pull
+    # request counts once, and the lines add up to the branch's real size.
+    # `--reverse` puts the oldest commit first so the totals accumulate.
     var log = _sh(
         String(
             "git -C '", dir, "' -c core.quotepath=off log --first-parent",
