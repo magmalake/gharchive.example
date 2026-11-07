@@ -5,8 +5,10 @@
 # again. magmalake/orca.mojo docs/orca-toml.md and docs/hetzner.md say more.
 
 [defaults]
-# One run of a pipeline at a time, until iceberg-mojo 0.11.1 is pinned
-# everywhere (magmalake/orca.mojo#164: concurrent commits to one table).
+# One run of a pipeline at a time. Concurrent commits to one table are safe
+# since iceberg-mojo 0.11.1 (magmalake/orca.mojo#164), but on the CAX21 the
+# cores, not the runs, are the limit: gharchive goes faster with more hours in
+# flight in one run (below) than with more runs.
 max_runs = 1
 
 [pipelines.gharchive]
@@ -25,8 +27,7 @@ fill_max_runs = 1
 # value on the CAX21: a busy 2023 day under 4 vCPU and 8 GB peaked at 1.8 GB
 # and ran 26% faster than at 2 and 2 before #37 (2 and 2 now peak at 1.2 GB);
 # above 4 the cores, not memory, are the limit. On the CAX41 (16 vCPU, 32 GB)
-# 12 and 12, about 5.7 GB. Still 2 and 2 here until 4 and 4 is tried on the
-# server (edit, deploy, register).
+# 12 and 12, about 5.7 GB.
 #
 # Timeouts and retries of an hour's download (#49), defaults in brackets:
 # GHARCHIVE_CONNECT_SECONDS (20) for the connect and TLS handshake,
@@ -35,7 +36,7 @@ fill_max_runs = 1
 # GHARCHIVE_RETRIES (4) after the first try, with backoff 1 s, 2 s, 4 s ...
 # up to 30 s (README, "Timeouts and retries"). Before #49 a stalled read
 # had no timeout, and a fill run waited 5 h 39 m on one.
-env = { DISTA_WORKER_SLOTS = "2", GHARCHIVE_PARALLEL = "2" }
+env = { DISTA_WORKER_SLOTS = "4", GHARCHIVE_PARALLEL = "4" }
 
 [pipelines.gharchive_index]
 env = { DISTA_WORKER_SLOTS = "3" }
