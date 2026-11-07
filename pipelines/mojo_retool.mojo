@@ -39,11 +39,19 @@ from lake import COMMITS, MIGRATIONS, REPOS, TAGS
 from replace import replace_files
 from cols import col, i64_at, str_at
 
+# The same dista task as mojo_history's: it runs on a worker, clones one
+# repository and returns its `History` (with `error` set on failure rather
+# than raising). `Tasks[...]` lists the tasks orca starts a runtime for, which
+# the step reaches through `ctx.runtime`.
 comptime ReadHistory = Task[String, History, read_history]
 comptime RetoolTasks = Tasks[ReadHistory]
 
 
 struct _Files(Movable):
+    """A table's data files at its current snapshot: their paths (what the
+    `overwrite` removes) and the rows they hold (what the rows read must add
+    up to)."""
+
     var paths: List[String]
     var rows: Int64
 
@@ -65,6 +73,14 @@ def _all_files(mut ctx: Ctx, dataset: String) raises -> _Files:
 
 
 def retool(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
+    """The step: re-reads the history of each repository in `keys` that
+    mojo_history has read, and rewrites the three tables with its rows
+    replaced. Returns the number of repositories re-read.
+
+    The tables are unpartitioned, so a repository's rows can't be replaced
+    by partition: the whole table is read, the rows of the re-read
+    repositories are dropped, and everything is written back with the new
+    rows in one `overwrite` per table."""
     var commits_t = table(ctx, COMMITS)
     var migrations_t = table(ctx, MIGRATIONS)
     var tags_t = table(ctx, TAGS)
@@ -87,12 +103,15 @@ def retool(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
         for b in scan(ctx, tags_t).to_batches():
             for ref r in tag_rows(b):
                 old_tags.append(r.copy())
+    # The rows read must equal the rows in the files about to be removed;
+    # otherwise the overwrite would silently lose some.
     if Int64(len(old_commits)) != commits_files.rows:
         raise Error(COMMITS, ": read ", len(old_commits), " rows but its files hold ", commits_files.rows)
     if Int64(len(old_migrations)) != migrations_files.rows:
         raise Error(MIGRATIONS, ": read ", len(old_migrations), " rows but its files hold ", migrations_files.rows)
     if Int64(len(old_tags)) != tags_files.rows:
         raise Error(TAGS, ": read ", len(old_tags), " rows but its files hold ", tags_files.rows)
+    # The repositories mojo_history has read (they have commit rows).
     var have = Dict[String, Bool]()
     for ref c in old_commits:
         have[c.repo] = True
@@ -117,6 +136,9 @@ def retool(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
             continue
         names.append(repo)
         refs.append(rt.remote[ReadHistory](repo))
+    # `done` is the repositories whose new history was read and replaces the
+    # old. A clone that failed, or a history with no commits, keeps its old
+    # rows (it is not in `done`).
     var done = Dict[String, Bool]()
     var new_commits = List[CommitRow]()
     var new_migrations = List[MigrationRow]()
@@ -139,6 +161,9 @@ def retool(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
             tagged[names[i]] = True
         for ref t in h.tags.items:
             new_tags.append(t.copy())
+    # Log every repository whose commit count changed: a retool that changes
+    # no counts only changed columns (tooling, version); a changed count
+    # means the first-parent history itself differs from when it was read.
     var before_c = Dict[String, Int]()
     var after_c = Dict[String, Int]()
     for ref c in old_commits:
@@ -159,6 +184,8 @@ def retool(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
     for ref m in old_migrations:
         if m.repo not in done:
             out_migrations.append(m.copy())
+    # Tags are replaced only for repositories whose new read found tags
+    # (`tagged`); a read with none keeps the old tags, as the docstring says.
     var out_tags = List[TagRow]()
     for ref t in old_tags:
         if t.repo not in tagged:
@@ -170,6 +197,10 @@ def retool(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
         out_migrations.append(m.copy())
     for ref t in new_tags:
         out_tags.append(t.copy())
+    # One `overwrite` snapshot per table (`replace.replace_files`); a retry
+    # whose first attempt got this far finds the snapshots and writes
+    # nothing. One run at a time (`max_runs` is left at 1) keeps the
+    # read-then-replace safe.
     var id = replace_files(ctx, commits_t, commits_files.paths, [commits_batch(out_commits)])
     _ = replace_files(ctx, migrations_t, migrations_files.paths, [migrations_batch(out_migrations)])
     _ = replace_files(ctx, tags_t, tags_files.paths, [tags_batch(out_tags)])
@@ -183,6 +214,10 @@ def retool(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
     return len(done)
 
 
+# `Gather` runs the step once per run, with all the run's keys as a `Seq`.
+# Unlike mojo_history, COMMITS, MIGRATIONS and TAGS are both read and written
+# and REPOS only read, and there is no `sensor=True`: nothing starts this but
+# `orca backfill`.
 comptime Retool = Step[
     "retool",
     Seq[Name],
@@ -193,6 +228,8 @@ comptime Retool = Step[
     reads=[REPOS, COMMITS, MIGRATIONS, TAGS],
     writes=[COMMITS, MIGRATIONS, TAGS],
 ]
+# `Keyed` partitions are the `repo` values of `mojo.repos`; `keys_per_run=50`
+# makes `@all` into runs of 50 repositories.
 comptime MojoRetool = Pipeline[
     "mojo_retool",
     Retool,

@@ -22,6 +22,9 @@ from replace import partition_files
 def committed_hours(mut ctx: Ctx, mut t: Table, n_hours: Int) raises -> Int:
     """How many of the step's first hours `t` already has a commit for;
     their ids are recorded again."""
+    # `find_commit` answers for the step's *next* commit to `t`, and an
+    # empty `append` records the one it found, which moves on to the
+    # following one: the loop counts commits in order until one is missing.
     var done = 0
     while done < n_hours and find_commit(ctx, t) >= 0:
         _ = append(ctx, t, List[RecordBatch]())
@@ -31,10 +34,14 @@ def committed_hours(mut ctx: Ctx, mut t: Table, n_hours: Int) raises -> Int:
 
 def day_files(t: Table, day: String, column: String) raises -> List[String]:
     """The paths of the files `t` holds for `day` (a day partition of the
-    timestamp column `column`)."""
+    timestamp column `column`). These are what a rerun's first commit
+    removes."""
     var dd = days_of(day)
     var parts = Dict[Int, Bool]()
     parts[Int(dd)] = True
+    # The row filter is for planning only (it lets the scan skip the other
+    # days' manifests); `partition_files` then keeps the files whose day
+    # partition is `dd`.
     var f = partition_files(
         t,
         parts,
@@ -61,6 +68,8 @@ def commit_hour(
     needs one, and one per hour keeps each table's numbering aligned."""
     if i < done:
         return append(ctx, t, List[RecordBatch]())
+    # The first commit of a rerun is the one that replaces: later hours just
+    # append to a table that by then holds only the new run's files.
     if i == done and len(old) > 0:
         var change = FileChanges()
         change.added_data = files.copy()
@@ -83,4 +92,6 @@ def commit_day(
     the table's day-partitioned timestamp column."""
     if find_commit(ctx, t) >= 0:
         return append(ctx, t, List[RecordBatch]())
+    # The day commit is "hour 0 of 0 done": the replacing overwrite if the day
+    # has old files, else an append.
     return commit_hour(ctx, t, 0, 0, day_files(t, day, column), files)

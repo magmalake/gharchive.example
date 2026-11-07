@@ -67,6 +67,11 @@ from lake import (
 from replace import partition_files, replace_files
 
 
+# A dista `Task` runs on a worker process. `day_activity` takes a job string
+# (`encode_job`: a day, the pinned snapshots, the repositories to read) and
+# returns that day's counts, so the step process never holds the scanned
+# rows. `Tasks[...]` lists the tasks a run's runtime is started for; the step
+# gets the runtime from `ctx.runtime`.
 comptime DayTask = Task[String, DayActivity, day_activity]
 comptime ActivityTasks = Tasks[DayTask]
 
@@ -74,6 +79,8 @@ comptime ActivityTasks = Tasks[DayTask]
 def _members(mut ctx: Ctx) raises -> Dict[String, Int64]:
     """The repositories of mojo.repos at the step's pinned snapshot, with the
     day each was created (0 if GitHub didn't say)."""
+    # `scan(ctx, ...)` is orca's pinned scan: a retry of the step sees the
+    # same members even if mojo_repos has committed since.
     var out = Dict[String, Int64]()
     var t = table(ctx, REPOS)
     for b in scan(ctx, t).select(["repo", "created_at"]).to_batches():
@@ -86,6 +93,10 @@ def _members(mut ctx: Ctx) raises -> Dict[String, Int64]:
 
 
 def _caught_up(t: Table) -> Dict[String, Bool]:
+    """The repositories already in `mojo.activity_repos`, which means their
+    whole history has been read (see the module docstring). Unreadable or
+    empty means none are: the run then catches everything up, which is safe
+    since a run replaces rows rather than appending them."""
     var out = Dict[String, Bool]()
     if not t.metadata.has_current_snapshot:
         return out^
@@ -127,15 +138,22 @@ def _loaded_days(hours: Table, pinned: Int64) raises -> List[String]:
 
 
 def _pair(repo: String, day: Int64) -> String:
+    """The key of a (repository, day) pair, which is the unit a run replaces."""
     return String(repo, "|", day)
 
 
 def activity(mut ctx: Ctx, d: Day) raises -> Int:
+    """The step: computes the day's activity for every member of
+    `mojo.repos`, catches up members not seen before over all the other days
+    loaded, and replaces those (repository, day) rows in `mojo.activity` and
+    `mojo.releases`. Returns the number of activity rows computed."""
     var day = String(d)
     var key_day = days_of(day)
     var members = _members(ctx)
     var hours_t = table(ctx, REPO_HOUR)
     var rels_t = table(ctx, GH_RELEASES)
+    # Every task reads at these snapshots, so all the days of the run see the
+    # same data, and a retry sees it again.
     var pinned = scan(ctx, hours_t).snapshot().snapshot_id
     var pinned_rels = scan(ctx, rels_t).snapshot().snapshot_id
     var act_t = ensure_table(ctx, ACTIVITY, activity_schema(), activity_spec())
@@ -145,7 +163,10 @@ def activity(mut ctx: Ctx, d: Day) raises -> Int:
 
     # Which repositories each day's task reads: every member on the run's
     # own day, and the members not caught up yet on every loaded day from
-    # the day they were created.
+    # the day they were created. `jobs` maps a day to its repositories, so a
+    # run that adds one repository reads every loaded day for it, but only
+    # for it. Days before a repository's creation are skipped; a creation
+    # day of 0 (GitHub didn't say) counts as before every day, so all are read.
     var jobs = Dict[String, List[String]]()
     var all = List[String]()
     for e in members.items():
@@ -172,7 +193,11 @@ def activity(mut ctx: Ctx, d: Day) raises -> Int:
             " loaded days; ", len(jobs), " days to read",
         ))
 
-    # One task a day, at most `MOJO_ACTIVITY_PARALLEL` at once.
+    # One task a day, at most `MOJO_ACTIVITY_PARALLEL` at once: a sliding
+    # window of `ObjectRef` futures (`rt.remote` starts a task, `rt.get` waits
+    # for its result and `rt.release` frees it on the worker), consumed in
+    # order, each consumed ref making room to start the next day. This
+    # bounds how many days' results and scans are in flight.
     ref rt = ctx.runtime[ActivityTasks]()
     var window = max(1, Int(getenv("MOJO_ACTIVITY_PARALLEL", "8")))
     var order = List[String]()
@@ -185,6 +210,9 @@ def activity(mut ctx: Ctx, d: Day) raises -> Int:
         next += 1
     var new_rows = List[ActivityRow]()
     var new_rels = List[ReleaseRow]()
+    # `computed` is every (repository, day) pair this run produced rows (or
+    # none) for, and `months` the month partitions they fall in; together they
+    # say which existing rows are superseded.
     var computed = Dict[String, Bool]()
     var months = Dict[Int, Bool]()
     var scanned = 0
@@ -211,7 +239,12 @@ def activity(mut ctx: Ctx, d: Day) raises -> Int:
             " releases (", got.ms, " ms)",
         ))
 
-    # Replace the computed pairs in the months they fall in.
+    # Replace the computed pairs in the months they fall in. The tables are
+    # partitioned by month, so replacing means rewriting those months' files:
+    # read the existing rows, keep the ones for pairs this run did not
+    # compute, and commit them together with the new rows as one `overwrite`
+    # that removes the old files. A pair with no activity today has no new row
+    # and its old one (if any) is dropped, which is what "recomputed" means.
     var kept_rows = List[ActivityRow]()
     var read_rows = Int64(0)
     var act_files = partition_files(act_t, months)
@@ -223,6 +256,8 @@ def activity(mut ctx: Ctx, d: Day) raises -> Int:
                 read_rows += 1
                 if _pair(r.repo, r.day) not in computed:
                     kept_rows.append(r.copy())
+    # The rows read must equal the rows in the files about to be removed;
+    # otherwise the overwrite below would silently lose some.
     if read_rows != act_files.rows:
         raise Error(
             ACTIVITY, ": read ", read_rows, " rows of the months replaced, but",
@@ -250,9 +285,14 @@ def activity(mut ctx: Ctx, d: Day) raises -> Int:
         new_rows.append(r.copy())
     for ref r in kept_rels:
         new_rels.append(r.copy())
+    # Two overwrite snapshots, one a table. `replace_files` returns the
+    # existing snapshot if a retry's first attempt already made it.
     var id = replace_files(ctx, act_t, act_files.paths, [activity_batch(new_rows)])
     _ = replace_files(ctx, rel_t, rel_files.paths, [releases_batch(new_rels)])
 
+    # Only after the rows are in: record the caught-up repositories, so a
+    # run that failed earlier catches them up again. `days` is how many
+    # loaded days were read for them.
     if len(fresh) > 0:
         var s = activity_repos_schema()
         var c_repo = ColumnBuilder.of(s, 1)
@@ -272,6 +312,10 @@ def activity(mut ctx: Ctx, d: Day) raises -> Int:
     return n_rows
 
 
+# `Mapped` runs the step once per partition (a `Day`). `reads`/`writes` are
+# enforced by `orca.tables` and drawn as lineage in the UI. All three reads
+# are datasets this pipeline doesn't write, which is what makes it a sensor
+# on them.
 comptime Activity = Step[
     "activity",
     Day,
@@ -282,6 +326,10 @@ comptime Activity = Step[
     reads=[REPO_HOUR, GH_RELEASES, REPOS],
     writes=[ACTIVITY, RELEASES, ACTIVITY_REPOS],
 ]
+# `sensor=True`: the scheduler starts a run when a run of another pipeline
+# commits a snapshot of any dataset the step reads and doesn't write, for the
+# days that snapshot holds. `max_runs=1`: the replace above assumes a single
+# writer.
 comptime MojoActivity = Pipeline[
     "mojo_activity",
     Activity,

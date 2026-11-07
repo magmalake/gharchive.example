@@ -54,7 +54,8 @@ struct DataFiles(Copyable, Movable):
 
 
 trait BatchSink:
-    """Where `parse_gz` puts each batch as it fills."""
+    """Where `parse_gz` puts each batch as it fills: a table writer in the
+    hour task, a plain list in tests."""
 
     def put(mut self, var batch: RecordBatch) raises:
         ...
@@ -90,6 +91,8 @@ struct TableWriter(BatchSink, Movable):
         self.sort_second = sort_second
 
     def put(mut self, var batch: RecordBatch) raises:
+        """Sorts the batch if asked to (each batch on its own: rows are in
+        order within a batch, not across the hour), then writes it."""
         if self.sort_first:
             var t_sort = perf_counter_ns()
             batch = sorted_by_text(batch, self.sort_first, self.sort_second)
@@ -99,6 +102,8 @@ struct TableWriter(BatchSink, Movable):
         self.write_ns += Int(perf_counter_ns() - t0)
 
     def finish(deinit self) -> DataFiles:
+        """Closes the last file and returns the entries of all of them, with
+        the row count and the time spent sorting and writing."""
         var out = DataFiles()
         out.rows = self.writer.rows
         out.sort_ms = self.sort_ns // 1_000_000

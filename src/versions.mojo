@@ -10,6 +10,11 @@ are the same release and compare equal.
 """
 
 
+# Where a version is read from, and the order those readers are tried in, is
+# at the end of the file (`pick_version`); `version_key` below is what the
+# console, `mojo_history` and `mojo_versions` all sort and compare with.
+
+
 def _num(s: StringSlice) -> Int:
     """The leading digits of `s` as a number, or -1 if there are none."""
     var v = 0
@@ -28,6 +33,8 @@ def version_key(v: String) -> List[Int]:
     var parts = v.strip().split(".")
     var nums = List[Int]()
     var dev = 0
+    # 1 for a release, 0 for a dev build or pre-release: it sorts before the
+    # release with the same numbers.
     var released = 1
     for p in parts:
         if p.startswith("dev"):
@@ -44,6 +51,7 @@ def version_key(v: String) -> List[Int]:
             break
     if len(nums) == 0:
         return List[Int]()
+    # Pad so the index arithmetic below is the same for 24.6 and 0.25.6.
     while len(nums) < 4:
         nums.append(0)
     var era: Int
@@ -91,6 +99,7 @@ def sort_versions(mut vs: List[String]):
 
 
 def _is_digit(c: UInt8) -> Bool:
+    """Whether the ASCII byte `c` is `0`-`9`."""
     return c >= 48 and c <= 57
 
 
@@ -108,6 +117,7 @@ def _version_at(b: Span[UInt8, _], var i: Int) -> String:
         else:
             break
     var out = String(StringSlice(unsafe_from_utf8=b[s:i]))
+    # A sentence's full stop after the number ("Mojo 24.4.") isn't part of it.
     while out.endswith("."):
         var cut = String(out[byte = : out.byte_length() - 1])
         out = cut^
@@ -123,6 +133,11 @@ def lock_version(text: String) -> String:
     """The Mojo version a `pixi.lock` or `magic.lock` installs: from a
     conda URL `.../<package>-<version>-<build>.conda`, trying the packages
     in `packages()` order. Empty if none is there."""
+    # A lock file lists every resolved package as a URL ending in
+    # `/<package>-<version>-<build>.conda`. Packages are tried most specific
+    # first, so a lock with both `mojo-compiler` and `max-core` reports the
+    # compiler's version. The needle starts with `/` so `mojo-` doesn't match
+    # inside `mojo-python-` or `my-mojo-`.
     var b = text.as_bytes()
     for pkg in packages():
         var needle = String("/", pkg, "-")
@@ -151,6 +166,7 @@ def manifest_version(text: String) -> String:
     for pkg in packages():
         for line in text.split("\n"):
             var l = String(line.strip())
+            # A TOML dependency line starts with the package name.
             if not l.startswith(pkg):
                 continue
             var rest = String(l[byte = pkg.byte_length() :]).strip()
@@ -162,6 +178,8 @@ def manifest_version(text: String) -> String:
                     var v = _version_at(b, i)
                     if v.byte_length() > 0:
                         return v^
+            # Listed, but with no number to read (`mojo = "*"`): depends on
+            # Mojo without saying which version.
             return String("*")
     return String()
 
@@ -243,6 +261,7 @@ def source_label(source: String) -> String:
 
 
 def _is_alnum(c: UInt8) -> Bool:
+    """Whether the ASCII byte `c` is a letter or digit."""
     return _is_digit(c) or (c >= 97 and c <= 122) or (c >= 65 and c <= 90)
 
 
@@ -305,6 +324,8 @@ def _scan_version(b: Span[UInt8, _], var i: Int) -> String:
 
 
 def _find_from(hay: String, needle: String, start: Int) -> Int:
+    """The byte offset of the first `needle` in `hay` at or after `start`,
+    or -1."""
     var b = hay.as_bytes()
     var nb = needle.as_bytes()
     var m = len(nb)
@@ -330,12 +351,14 @@ def _line_start(b: Span[UInt8, _], i: Int) -> Int:
 
 
 def _skip_spaces(b: Span[UInt8, _], var i: Int) -> Int:
+    """`i` moved past spaces and tabs."""
     while i < len(b) and (b[i] == UInt8(32) or b[i] == UInt8(9)):
         i += 1
     return i
 
 
 def _is_pkg_name(pkg: String) -> Bool:
+    """Whether `pkg` is a package name that stands for Mojo's version."""
     return pkg == "mojo" or pkg == "mojo-compiler" or pkg == "max" or pkg == "modular"
 
 
@@ -344,6 +367,8 @@ def pin_version(text: String) -> String:
     requirements file pins: `mojo==24.4.0`, `max>=24.5`, `mojo-compiler~=1.0`,
     `modular install mojo==24.4`. The package name must stand alone. A single
     `=` counts on a line that says `add` or `install`. Empty if none."""
+    # Each package is searched for separately, and the pin earliest in the
+    # text wins (`best_at`), whichever package it is for.
     var low = text.lower()
     var b = low.as_bytes()
     var best = String()
@@ -355,6 +380,8 @@ def pin_version(text: String) -> String:
             if i < 0 or i >= best_at:
                 break
             at = i + 1
+            # The name must stand alone: not `my-mojo`, `pymojo`, `x/max` or
+            # `a.max`.
             var before_ok = i == 0 or not (
                 _is_alnum(b[i - 1]) or b[i - 1] == UInt8(ord("_"))
                 or b[i - 1] == UInt8(ord("-")) or b[i - 1] == UInt8(ord("/"))
@@ -368,6 +395,9 @@ def pin_version(text: String) -> String:
             if j < len(b) and b[j] == UInt8(ord("-")) and pkg != "mojo-compiler":
                 continue  # max-parallel, mojo-stdlib, ...
             j = _skip_spaces(b, j)
+            # `op` is how many bytes the operator took: `==`, `>=` and `~=`
+            # are two; a lone `=` is one and is believed only in an `add` or
+            # `install` command (pixi's `mojo=24.4`), not in prose or YAML.
             var op = 0
             if j + 1 < len(b) and b[j + 1] == UInt8(ord("=")) and (
                 b[j] == UInt8(ord("=")) or b[j] == UInt8(ord(">")) or b[j] == UInt8(ord("~"))
@@ -437,6 +467,8 @@ def _action_version(text: String) -> String:
         var l = String(lines[i])
         if "uses:" not in l or "mojo" not in l:
             continue
+        # The `with:` block is a few lines below; stop at the next step
+        # (`- `) so another action's `version:` isn't taken for this one's.
         for k in range(i + 1, min(i + 7, len(lines))):
             var n = String(lines[k]).strip()
             if n.startswith("- "):
@@ -488,7 +520,9 @@ def script_version(text: String) -> String:
     var e = _env_version(text)
     var a = _action_version(text)
     var im = _image_version(text)
-    # The order of the checks is the order of preference.
+    # All four readers run and the first non-empty answer in this order wins,
+    # wherever in the file each was found: an explicit pin beats a variable,
+    # which beats a setup action, which beats an image tag.
     if p.byte_length() > 0:
         return p^
     if e.byte_length() > 0:
@@ -525,8 +559,14 @@ def readme_version(text: String) -> String:
     var e = _env_version(text)
     if e.byte_length() > 0:
         return e^
+    # A README is prose, so this reader is the most conservative: a number
+    # counts only after "Mojo" and only with a "strong" mark (an operator,
+    # `v`, `:` or the word "version") or a cue word earlier in the line
+    # ("requires", "tested with", ...), which keeps out "Mojo 2023" and the
+    # like.
     for raw in text.split("\n"):
         var line = String(raw)
+        # Minified or generated lines aren't worth scanning.
         if line.byte_length() > 1000:
             continue
         var low = line.lower()
@@ -587,6 +627,7 @@ def readme_version(text: String) -> String:
             var v = _clean_version(_version_at(b, j))
             if v.byte_length() == 0:
                 continue
+            # `mojo 24.4/` is a path (a URL or a directory), not a version.
             var after = j + v.byte_length()
             if after < len(b) and (b[after] == UInt8(ord("/"))):
                 continue
@@ -629,7 +670,11 @@ def pick_version(
     readme: String,
 ) -> Tuple[String, String]:
     """The version and its source by precedence: lock file, manifest, a
-    version file, CI, Docker, README. ("", "") if none names one."""
+    version file, CI, Docker, README. ("", "") if none names one.
+
+    Most to least trustworthy: a lock file records what was installed, a
+    manifest what was asked for, and the rest are a person's words or a
+    build's settings."""
     if usable(lock):
         return (lock, String(SOURCE_LOCK))
     if usable(manifest):

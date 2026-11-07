@@ -38,6 +38,8 @@ def _ca_bundle() -> String:
 
 
 def _client(timeout_ms: Int = 120_000) raises -> HttpClient:
+    """A new blocking client for one call: each call makes its own, so none
+    is shared between threads."""
     var ca = _ca_bundle()
     if ca:
         return HttpClient(TlsConfig(ca_bundle=ca), timeout_ms=timeout_ms)
@@ -58,7 +60,11 @@ def get_bytes(url: String, timeout_ms: Int = 600_000) raises -> List[UInt8]:
 
 
 struct _Shared(Movable):
-    """What a download's reader thread and its consumer share."""
+    """What a download's reader thread and its consumer share. The reader
+    writes `buf`, then publishes progress through `have` and `state` with
+    atomic stores; the consumer reads only the first `have` bytes of `buf`
+    (allocated to its full `Content-Length` up front when that is known, so
+    it doesn't move while the reader runs)."""
 
     var client: HttpClient
     var resp: HttpStreamResponse
@@ -86,6 +92,8 @@ struct _Shared(Movable):
 
 
 def _cell(ref v: Int64) -> AtomicCounter:
+    """An atomic view of one of `_Shared`'s integers, for the cross-thread
+    stores and loads."""
     return AtomicCounter.at(Int(Pointer(to=v)))
 
 
@@ -95,6 +103,8 @@ def _pull(arg: OpaquePtr) -> OpaquePtr:
     var sh = Pointer[_Shared, MutUntrackedOrigin](unsafe_from_address=Int(arg))
     var t0 = perf_counter_ns()
     try:
+        # No `Content-Length` (chunked): the buffer can't be sized up front,
+        # so the body is gathered and published all at once.
         if sh[].size < 0:
             var all = List[UInt8]()
             while True:
@@ -109,6 +119,8 @@ def _pull(arg: OpaquePtr) -> OpaquePtr:
             var at = 0
             var dst = sh[].buf.unsafe_ptr()
             while True:
+                # Asked to stop: the `Download` was dropped before the body
+                # ended, and its destructor is waiting to join this thread.
                 if _cell(sh[].state).load() == 3:
                     return arg
                 var chunk = sh[].resp.read_chunk(1 << 20)
@@ -137,7 +149,10 @@ def _pull(arg: OpaquePtr) -> OpaquePtr:
 
 struct Download(GzInput, Movable):
     """A GET whose body arrives on its own thread while the caller uses
-    what has come so far: `wait` for more, `view` the bytes in hand."""
+    what has come so far: `wait` for more, `view` the bytes in hand. This
+    is what lets an hour task gunzip and parse while the hour is still
+    downloading (about 100 MB of gzip), so its time is roughly the longer of
+    the two, not their sum."""
 
     var addr: Int
     """The heap `_Shared`, by address: the reader thread holds it too."""
@@ -145,6 +160,8 @@ struct Download(GzInput, Movable):
     var url: String
 
     def __init__(out self, url: String, timeout_ms: Int = 600_000) raises:
+        """Sends the request and starts the reader thread; raises on any
+        status but 200. The body is not read yet."""
         var c = _client(timeout_ms)
         var req = Request(method="GET", url=url)
         req.headers.set("User-Agent", USER_AGENT)
@@ -166,6 +183,8 @@ struct Download(GzInput, Movable):
 
     @always_inline
     def _sh(self) -> Pointer[_Shared, MutUntrackedOrigin]:
+        """The shared state, which lives on the heap so the reader thread can
+        hold it while this struct moves."""
         return Pointer[_Shared, MutUntrackedOrigin](unsafe_from_address=self.addr)
 
     def __del__(deinit self):
@@ -233,7 +252,9 @@ struct Reply(Movable):
     var status: Int
     var body: String
     var remaining: Int
-    """`X-RateLimit-Remaining`, or -1 when the reply didn't say."""
+    """`X-RateLimit-Remaining`: requests left in the current window, or -1
+    when the reply didn't say. mojo_repos and mojo_stats use it, with the
+    two below, to stop or wait before GitHub refuses a request."""
     var retry_after: Int
     """`Retry-After` in seconds, or -1."""
     var reset: Int
@@ -241,6 +262,7 @@ struct Reply(Movable):
 
 
 def _header_int(resp: Response, name: String) -> Int:
+    """A numeric response header, or -1 if it is absent or not a number."""
     var v = resp.headers.get(name)
     if v:
         try:
@@ -251,7 +273,9 @@ def _header_int(resp: Response, name: String) -> Int:
 
 
 def github(path: String) raises -> Reply:
-    """GET `https://api.github.com<path>`, with the token if there is one."""
+    """GET `https://api.github.com<path>`, with the token if there is one.
+    Any status comes back as a `Reply` (it does not raise on 403/404/429), so
+    that callers can tell a missing repository from a rate limit."""
     var c = _client()
     var req = Request(method="GET", url=String("https://api.github.com", path))
     req.headers.set("User-Agent", USER_AGENT)
@@ -271,7 +295,8 @@ def github(path: String) raises -> Reply:
 
 
 def raw_file(repo: String, branch: String, file: String) raises -> String:
-    """A file from raw.githubusercontent.com, or "" if it isn't there."""
+    """A file from raw.githubusercontent.com, or "" if it isn't there. These
+    requests are not part of the REST API's rate limit and send no token."""
     var c = _client()
     var url = String(
         "https://raw.githubusercontent.com/", repo, "/", branch, "/", file

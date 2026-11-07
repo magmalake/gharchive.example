@@ -44,12 +44,18 @@ from stats import StatsRow, stats_of
 
 @fieldwise_init
 struct _Stored(Copyable, Movable):
+    """A row of `mojo.repo_stats` as stored: the GitHub numbers (`row`), the
+    day they are for (`as_of`, days since the epoch) and when they were
+    fetched (microseconds)."""
+
     var as_of: Int64
     var fetched_at: Int64
     var row: StatsRow
 
 
 def _repos(mut ctx: Ctx) raises -> List[String]:
+    """Every repository of `mojo.repos` (at the step's pinned snapshot), once,
+    sorted by name so a run asks about them in a stable order."""
     var seen = Dict[String, Bool]()
     var out = List[String]()
     var t = table(ctx, REPOS)
@@ -68,6 +74,9 @@ def _repos(mut ctx: Ctx) raises -> List[String]:
 
 
 def stored_rows(b: RecordBatch) raises -> List[_Stored]:
+    """The rows of a scanned `mojo.repo_stats` batch. The names are read once
+    and the columns are looked up by position below, so the order of the
+    list must match the constructor calls."""
     var out = List[_Stored]()
     var c = List[Int]()
     for name in [
@@ -105,10 +114,16 @@ def stored_rows(b: RecordBatch) raises -> List[_Stored]:
 
 
 def _num(v: Int64, ok: Bool) -> Datum:
+    """`v`, or null when GitHub gave no numbers for the repository (gone or
+    blocked), so a missing repository isn't plotted as zero stars."""
     return Datum.long_(v) if ok else Datum.none()
 
 
 def stats_batch(rows: List[_Stored]) raises -> RecordBatch:
+    """`rows` as a batch of `mojo.repo_stats`. `topics` is a list column, so
+    the batch is built from column trees, with the columns in schema order
+    (field ids 1-8, the topics, then 11-18; ids 9 and 10 are the topics'
+    list and element)."""
     var s = repo_stats_schema()
     var cs = List[ColumnBuilder]()
     for id in [1, 2, 3, 4, 5, 6, 7, 8]:
@@ -152,10 +167,17 @@ def stats_batch(rows: List[_Stored]) raises -> RecordBatch:
 
 
 def refresh(mut ctx: Ctx, d: Day) raises -> Int:
+    """The step: asks GitHub about every repository in `mojo.repos` and
+    replaces the day's rows in `mojo.repo_stats` with the answers, keeping
+    the other days of the month. Returns the number of repositories."""
     var day = String(d)
     var as_of = days_of(day)
     var repos = _repos(ctx)
     var t = ensure_table(ctx, REPO_STATS, repo_stats_schema(), repo_stats_spec())
+    # The most this whole step waits on GitHub's rate limit: a window is an
+    # hour, so 3900 s (65 minutes) is one window and a margin. Each repository
+    # gets what is left of it (`max_wait - waited`); the step fails when a
+    # wait would exceed it, rather than sleeping on indefinitely.
     var max_wait = Int(getenv("MOJO_STATS_MAX_WAIT", "3900"))
     var fetched = now() * 1_000_000
     var rows = List[_Stored]()
@@ -169,6 +191,9 @@ def refresh(mut ctx: Ctx, d: Day) raises -> Int:
         waited += a.waited_s
         remaining = a.remaining
         states[a.row.state] = states.get(a.row.state, 0) + 1
+        # Every non-ok state (gone, blocked, renamed, error) is a row too, so
+        # the time series records the repository's disappearance instead of
+        # silently stopping.
         if a.row.state != "ok":
             ctx.log(String(repo, ": ", a.row.state, " ", a.row.renamed_to))
         rows.append(_Stored(as_of, fetched, a.row.copy()))
@@ -180,7 +205,12 @@ def refresh(mut ctx: Ctx, d: Day) raises -> Int:
         waited, " s waiting on the rate limit; ", remaining, " left):", summary,
     ))
 
-    # Replace this day's rows; keep the month's other days.
+    # Replace this day's rows; keep the month's other days. The table is
+    # partitioned by month of `as_of`, so a day's rows live in a file shared
+    # with the month's other days: read the month, keep the rows of other
+    # days, and commit them with the new rows as one `overwrite` that removes
+    # the month's old files. Rerunning a day therefore gives one row per
+    # repository, not two.
     var months = Dict[Int, Bool]()
     months[month_of(as_of)] = True
     var files = partition_files(t, months)
@@ -195,6 +225,8 @@ def refresh(mut ctx: Ctx, d: Day) raises -> Int:
                 if st.as_of != as_of:
                     rows.append(st.copy())
                     kept += 1
+    # The rows read must equal the rows in the files about to be removed;
+    # otherwise the overwrite below would silently lose some.
     if read_rows != files.rows:
         raise Error(
             REPO_STATS, ": read ", read_rows, " rows of the month, but its",
@@ -205,6 +237,9 @@ def refresh(mut ctx: Ctx, d: Day) raises -> Int:
     return len(repos)
 
 
+# `Mapped`: the step runs once per partition of a run, here a `Day`. There is
+# no dista task: the requests are made one at a time by the step itself, which
+# is what keeps them within GitHub's rate limit.
 comptime Refresh = Step[
     "refresh",
     Day,
@@ -215,6 +250,11 @@ comptime Refresh = Step[
     reads=[REPOS],
     writes=[REPO_STATS],
 ]
+# A `Cron` schedule fires on its own. `fills=Current` makes a fire fill the
+# partition its time falls in (Monday itself, not the day before, which is
+# the default), and `catchup=False` starts only the latest fire if the
+# scheduler was down for several: GitHub only gives the current numbers, so a
+# late run can't recover a missed week's anyway.
 comptime MojoStats = Pipeline[
     "mojo_stats",
     Refresh,

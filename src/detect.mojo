@@ -17,6 +17,11 @@ from versions import names_mojo
 
 @fieldwise_init
 struct Candidate(Copyable, Movable):
+    """A repository that may be a Mojo one, with why it looks like it. Found
+    by `scan_event` while an hour's events are parsed, stored in
+    `gharchive.candidates` (one row per signal), and confirmed or dropped by
+    `verify` in mojo_repos."""
+
     var repo: String
     var signals: String
     """Comma-separated: `language`, `push`, `manifest`, `description`, `name`."""
@@ -25,6 +30,8 @@ struct Candidate(Copyable, Movable):
     """A pushed commit that may touch `.mojo` files, for `verify`."""
 
     def add(mut self, signal: String):
+        """Adds `signal` unless it is there already, keeping the order the
+        signals were noticed in."""
         for s in self.signals.split(","):
             if s == signal:
                 return
@@ -33,13 +40,16 @@ struct Candidate(Copyable, Movable):
         self.signals += signal
 
     def has(self, signal: String) -> Bool:
+        """Whether `signal` is one of the signals."""
         for s in self.signals.split(","):
             if s == signal:
                 return True
         return False
 
     def rank(self) -> Int:
-        """Lower is checked first: the strongest signs, and the cheapest."""
+        """Lower is checked first: the strongest signs, and the cheapest.
+        mojo_repos checks in this order because its GitHub budget may run out
+        before the list does."""
         if self.has("language"):
             return 0
         if self.has("push"):
@@ -53,6 +63,7 @@ struct Candidate(Copyable, Movable):
 
 @always_inline
 def _lower(c: UInt8) -> UInt8:
+    """ASCII lowercase of one byte."""
     if c >= 65 and c <= 90:
         return c + 32
     return c
@@ -60,6 +71,10 @@ def _lower(c: UInt8) -> UInt8:
 
 def contains_ci(b: Span[UInt8, _], s: Int, e: Int, needle: StringSlice) -> Bool:
     """Whether `b[s:e]` contains `needle` (lowercase ASCII), ignoring case."""
+    # Events are scanned as raw bytes, with no JSON parse or allocation, since
+    # this runs on every event of the day; the fields are
+    # only parsed (`jscan`) for the few payloads that pass a cheap substring
+    # test.
     var nb = needle.as_bytes()
     var m = len(nb)
     if m == 0:
@@ -80,6 +95,7 @@ def contains_ci(b: Span[UInt8, _], s: Int, e: Int, needle: StringSlice) -> Bool:
 
 
 def _word(c: UInt8) -> Bool:
+    """Whether `c` can be part of a file's name (letters, digits, `_`, `-`)."""
     return (
         (c >= 48 and c <= 57)
         or (c >= 65 and c <= 90)
@@ -127,6 +143,11 @@ def note(
     at: Int64,
     sha: String = "",
 ) raises:
+    """Records that `repo` showed `signal` at time `at` (microseconds): a new
+    candidate, or a new signal on an existing one, with the earliest `at` as
+    its `first_seen` and the first `sha` seen. Names that aren't `owner/name`
+    are ignored. Also the merge `hourindex.candidates_from` uses to rebuild
+    a day's candidates from the table's rows."""
     if repo.byte_length() == 0 or "/" not in repo:
         return
     if repo in found:
@@ -147,7 +168,8 @@ def scan_event(
     at: Int64,
     payload: Span[UInt8, _],
 ) raises:
-    """Adds the candidates one event points at to `found`."""
+    """Adds the candidates one event points at to `found`. `payload` is the
+    event's JSON; `repo` and `type` come from the columns of the event."""
     var rb = repo.as_bytes()
     if contains_ci(rb, 0, len(rb), "mojo"):
         note(found, repo, "name", at)
@@ -156,7 +178,11 @@ def scan_event(
         return
     var all = Range(0, n)
     # Repository objects with a language: pull requests' base and head
-    # repositories, a fork's new repository.
+    # repositories, a fork's new repository. This is the strongest signal
+    # (GitHub itself says the language is Mojo), and the cheap substring test
+    # above the parse keeps the parse for the rare payload that has it. The
+    # base/head repositories can differ from the event's `repo`, so they are
+    # noted under their own `full_name`.
     if contains_ci(payload, 0, n, '"language":"mojo"'):
         if type.startswith("PullRequest"):
             for side in ["base", "head"]:
@@ -170,6 +196,9 @@ def scan_event(
             note(found, repo, "language", at)
         else:
             note(found, repo, "language", at)
+    # A push event carries commit messages but not file lists, so a message
+    # that names a `.mojo` file is only a hint: `verify` later asks GitHub
+    # whether the commit (`sha`) really touched Mojo files.
     if type == "PushEvent":
         if not contains_ci(payload, 0, n, ".mojo") and not contains_ci(
             payload, 0, n, "🔥"
@@ -191,6 +220,8 @@ def scan_event(
 
 @fieldwise_init
 struct RepoInfo(Copyable, Movable):
+    """The fields of `mojo.repos` that come from `GET /repos/{owner}/{repo}`."""
+
     var repo: String
     var created_at: Int64
     var stars: Int64
@@ -215,6 +246,8 @@ def topics_of(b: Span[UInt8, _], obj: Range) -> List[String]:
 
 
 def long_of(s: String) -> Int64:
+    """The number at the start of `s` (0 if there is none): GitHub's counts
+    are read out of the scanner as text."""
     var v = Int64(0)
     for c in s.as_bytes():
         if c < 48 or c > 57:
@@ -228,6 +261,8 @@ def parse_repo(body: String) -> RepoInfo:
     var b = body.as_bytes()
     var all = Range(0, len(b))
     var lic = field(b, all, "license")
+    # `spdx_id` is "NOASSERTION" for licenses GitHub can't classify; the
+    # license's name is more informative than that.
     var license = text(b, field(b, lic, "spdx_id"))
     if license.byte_length() == 0 or license == "NOASSERTION":
         var name = text(b, field(b, lic, "name"))
@@ -259,6 +294,8 @@ struct Verdict(Copyable, Movable):
 
 
 def _commit_touches_mojo(repo: String, sha: String, mut remaining: Int) raises -> Bool:
+    """Whether commit `sha` changed a `.mojo` or `.🔥` file, from the API's
+    file list for it. `remaining` is updated from the reply's rate limit."""
     var r = github(String("/repos/", repo, "/commits/", sha))
     remaining = r.remaining
     if r.status != 200:
@@ -272,11 +309,18 @@ def _commit_touches_mojo(repo: String, sha: String, mut remaining: Int) raises -
 
 
 def verify(c: Candidate) raises -> Verdict:
-    """Asks GitHub whether `c` is a Mojo repository."""
+    """Asks GitHub whether `c` is a Mojo repository. The checks go from
+    cheapest to dearest: the repository itself (one API call), its manifests
+    (raw files, which GitHub doesn't count against the API limit), and the
+    pushed commit (a second API call, made only if budget is left)."""
     var empty = RepoInfo(c.repo, 0, 0, 0, "", "", "", 0, "", False, List[String]())
     var r = github(String("/repos/", c.repo))
+    # GitHub answers 403 or 429 when the rate limit is used up: not a verdict
+    # on the repository, so the caller stops and tries it again later.
     if r.status == 403 or r.status == 429:
         return Verdict("limited", "", empty^, r.remaining)
+    # Any other status, 404 for a deleted repository among them, settles it
+    # as `gone`.
     if r.status != 200:
         return Verdict("gone", String("HTTP ", r.status), empty^, r.remaining)
     var info = parse_repo(r.body)
@@ -287,6 +331,8 @@ def verify(c: Candidate) raises -> Verdict:
         return Verdict("fork", "", info^, remaining)
     if info.language == "Mojo":
         return Verdict("mojo", "language", info^, remaining)
+    # A repository GitHub doesn't call Mojo may still be a Mojo project: its
+    # manifest names a Mojo package.
     for f in ["pixi.toml", "mojoproject.toml"]:
         var manifest = raw_file(info.repo, info.default_branch, f)
         if names_mojo(manifest):
