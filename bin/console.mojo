@@ -46,6 +46,7 @@ from flare.net import SocketAddr
 from orca.civil import now
 from threads import OpaquePtr, ThreadHandle
 
+from analytics import posthog_snippet
 from charts import compact, donut, grid_line, line_chart
 from jscan import micros_to_iso
 from listing import (
@@ -299,7 +300,9 @@ def _page(
         "<meta name=viewport content='width=device-width,initial-scale=1'>",
         "<meta name=color-scheme content='light dark'>",
         "<meta name=description content='", html_escape(DESCRIPTION), "'>",
-        "<title>", html_escape(full), "</title><style>", STYLE, "</style></head><body>",
+        "<title>", html_escape(full), "</title><style>", STYLE, "</style>",
+        posthog_snippet(getenv("POSTHOG_KEY"), "mojourney"),
+        "</head><body>",
         "<header class=top><div class=wrap><a class=brand href='/'>", MARK, BRAND, "</a>",
         "<form class=search action='/search' role=search><input type=search name=q value='",
         html_escape(q), "' placeholder='Search repos' aria-label='Search repos'",
