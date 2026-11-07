@@ -1,5 +1,5 @@
-"""What the console shows, read from the lake: one `Library` per row of
-mojo.repos, with what mojo.commits and mojo.migrations say about it, and its
+"""What the console shows, read from the lake: one `Library` per repository
+of mojo.repos (a repository in it twice is one), with what mojo.commits and mojo.migrations say about it, and its
 latest row of mojo.repo_stats; and per repository its activity by month
 (mojo.activity), releases (mojo.releases) and tags (mojo.tags)."""
 
@@ -110,27 +110,33 @@ def libraries(mut ob: Builder) raises -> List[Library]:
         var c_topics = col(b, "topics") if has_col(b, "topics") else -1
         for r in range(b.num_rows):
             var repo = str_at(b.column(c_repo), r)
-            if repo in index:
+            var first_seen = i64_at(b.column(c_first), r)
+            var at = index.get(repo, -1)
+            # One library per name: a repo in mojo.repos twice keeps its
+            # earliest row (by first_seen; the first one read on a tie).
+            if at >= 0 and first_seen >= out[at].first_seen:
+                continue
+            var lib = Library(
+                repo,
+                str_at(b.column(c_desc), r),
+                i64_at(b.column(c_created), r),
+                first_seen,
+                str_at(b.column(c_found), r),
+                i64_at(b.column(c_stars), r),
+                i64_at(b.column(c_forks), r),
+                str_at(b.column(c_lic), r),
+                i64_at(b.column(c_size), r),
+                0, 0, 0, 0, 0, String(), String(),
+                strs_at(b, c_topics, r) if c_topics >= 0 else List[String](),
+                0, 0, 0, False, String(), String(),
+                String(), String(), String(),
+            )
+            if at >= 0:
+                out[at] = lib^
                 continue
             index[repo] = len(out)
             ids.append(ob.add_repo(repo))
-            out.append(
-                Library(
-                    repo,
-                    str_at(b.column(c_desc), r),
-                    i64_at(b.column(c_created), r),
-                    i64_at(b.column(c_first), r),
-                    str_at(b.column(c_found), r),
-                    i64_at(b.column(c_stars), r),
-                    i64_at(b.column(c_forks), r),
-                    str_at(b.column(c_lic), r),
-                    i64_at(b.column(c_size), r),
-                    0, 0, 0, 0, 0, String(), String(),
-                    strs_at(b, c_topics, r) if c_topics >= 0 else List[String](),
-                    0, 0, 0, False, String(), String(),
-                    String(), String(), String(),
-                )
-            )
+            out.append(lib^)
     _latest_stats(out, index)
     var commits_table = try_load("mojo", "commits")
     if commits_table:

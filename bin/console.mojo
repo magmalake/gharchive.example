@@ -442,11 +442,14 @@ struct Cache(Movable):
         var b = Builder(today)
         var libs = libraries(b)
         var ov = b.finish(len(libs))
-        var commits30 = List[Int64]()
-        var lines_delta = List[Int64]()
-        for ref a in b.accs:
-            commits30.append(Int64(a.commits30))
-            lines_delta.append(a.last_lines - (a.cut_lines if a.cut_seq >= 0 else 0))
+        # Per repo in `libs`' order (biggest first), joined by name: `b.accs`
+        # is in mojo.repos' order, so its index is no repo's index in `libs`.
+        var names = List[String]()
+        for ref l in libs:
+            names.append(l.repo)
+        var recent = b.recent(names)
+        var commits30 = recent.commits30.copy()
+        var lines_delta = recent.lines_delta.copy()
         var gains = star_gains(today - 30)
         var cutoff = Int64(today - ACTIVE_DAYS) * 86_400_000_000
         var lines = List[Int64]()

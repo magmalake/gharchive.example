@@ -5,6 +5,8 @@ reads the day's rows of `gharchive.candidates` (which gharchive's hour tasks
 wrote with `detect.scan_event` while they parsed the events), asks
 GitHub about the ones it hasn't asked about before (`detect.verify`), and
 appends the Mojo ones to `mojo.repos` and every answer to `mojo.checked`.
+A repository already in mojo.repos, read again just before the append, is
+never appended again.
 mojo_history is keyed on `mojo.repos`' `repo` column, so each snapshot of
 it starts mojo_history for the repositories it adds.
 
@@ -23,9 +25,10 @@ from iceberg.values import Datum
 from orca import Ctx, Daily, Day, Mapped, Pipeline, Step, orca_main
 from orca.civil import now
 from orca.tables import append, ensure_table, scan, table
+from parquet import RecordBatch
 
 from cols import col, i64_at, str_at, str_range
-from detect import Candidate, Verdict, verify
+from detect import Candidate, RepoInfo, Verdict, verify
 from hourindex import candidates_from
 from jscan import days_from_civil
 from lake import (
@@ -128,6 +131,63 @@ def _day_candidates(mut ctx: Ctx, d: Day) raises -> Dict[String, Candidate]:
     )
 
 
+
+@fieldwise_init
+struct _Found(Copyable, Movable):
+    """A candidate GitHub says is a Mojo repository."""
+
+    var info: RepoInfo
+    var candidate: Candidate
+    var how: String
+
+
+def _repos_batch(found: List[_Found], known: Dict[String, Bool]) raises -> Tuple[RecordBatch, Int]:
+    """The rows of mojo.repos for the repositories of `found` that aren't in
+    `known` (each once), and how many there are."""
+    var rs = repos_schema()
+    var c_repo = ColumnBuilder.of(rs, 1)
+    var c_created = ColumnBuilder.of(rs, 2)
+    var c_first = ColumnBuilder.of(rs, 3)
+    var c_found = ColumnBuilder.of(rs, 4)
+    var c_stars = ColumnBuilder.of(rs, 5)
+    var c_forks = ColumnBuilder.of(rs, 6)
+    var c_license = ColumnBuilder.of(rs, 7)
+    var c_branch = ColumnBuilder.of(rs, 8)
+    var c_desc = ColumnBuilder.of(rs, 9)
+    var c_size = ColumnBuilder.of(rs, 10)
+    var c_lang = ColumnBuilder.of(rs, 11)
+    var c_fork = ColumnBuilder.of(rs, 12)
+    var c_topics = NestedBuilder.of(rs, 13)
+    var n = 0
+    var taken = Dict[String, Bool]()
+    for ref f in found:
+        ref info = f.info
+        if info.repo in known or info.repo in taken:
+            continue
+        taken[info.repo] = True
+        c_repo.add(Datum.string_(info.repo))
+        c_created.add(ts(info.created_at))
+        c_first.add(ts(f.candidate.first_seen))
+        c_found.add(Datum.string_(String(f.candidate.signals, " / ", f.how)))
+        c_stars.add(Datum.long_(info.stars))
+        c_forks.add(Datum.long_(info.forks))
+        c_license.add(str_or_null(info.license))
+        c_branch.add(str_or_null(info.default_branch))
+        c_desc.add(str_or_null(info.description))
+        c_size.add(Datum.long_(info.size_kb))
+        c_lang.add(str_or_null(info.language))
+        c_fork.add(Datum.bool_(info.fork))
+        c_topics.add(json_strings(info.topics))
+        n += 1
+    # `topics` is a list column, so this table's batch is built from column
+    # trees (`NestedBuilder`), not the flat `batch_of` used for the others.
+    var trees = List[ColumnTree]()
+    for ref c in [c_repo^, c_created^, c_first^, c_found^, c_stars^, c_forks^, c_license^, c_branch^, c_desc^, c_size^, c_lang^, c_fork^]:
+        trees.append(c.build_tree())
+    trees.append(c_topics.build())
+    return (batch_of_columns(trees^), n)
+
+
 def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
     """The step: checks the day's new candidates with GitHub, within the API
     budget, and appends the Mojo repositories to `mojo.repos` and every
@@ -172,23 +232,7 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
     # more than one (the repository, then a pushed commit), so 25 candidates
     # keep a local run under it; a token allows 5000.
     var budget = Int(getenv("MOJO_REPOS_BUDGET", "1000" if getenv("GITHUB_TOKEN") else "25"))
-    # Column builders for the two tables, filled as answers arrive and
-    # appended once at the end; the number is the schema's field id.
-    var rs = repos_schema()
     var cs = checked_schema()
-    var c_repo = ColumnBuilder.of(rs, 1)
-    var c_created = ColumnBuilder.of(rs, 2)
-    var c_first = ColumnBuilder.of(rs, 3)
-    var c_found = ColumnBuilder.of(rs, 4)
-    var c_stars = ColumnBuilder.of(rs, 5)
-    var c_forks = ColumnBuilder.of(rs, 6)
-    var c_license = ColumnBuilder.of(rs, 7)
-    var c_branch = ColumnBuilder.of(rs, 8)
-    var c_desc = ColumnBuilder.of(rs, 9)
-    var c_size = ColumnBuilder.of(rs, 10)
-    var c_lang = ColumnBuilder.of(rs, 11)
-    var c_fork = ColumnBuilder.of(rs, 12)
-    var c_topics = NestedBuilder.of(rs, 13)
     var k_repo = ColumnBuilder.of(cs, 1)
     var k_at = ColumnBuilder.of(cs, 2)
     var k_out = ColumnBuilder.of(cs, 3)
@@ -198,7 +242,7 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
     var k_sha = ColumnBuilder.of(cs, 7)
     var checked_now = _now_micros()
     var asked_n = 0
-    var added = 0
+    var found_mojo = List[_Found]()
     var added_names = Dict[String, Bool]()
     # Once `stopped` (budget used up, or GitHub says limited), the loop keeps
     # going only to write the remaining candidates to mojo.checked as
@@ -233,20 +277,7 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
                 # additions.
                 if v.outcome == "mojo" and v.info.repo not in known and v.info.repo not in added_names:
                     added_names[v.info.repo] = True
-                    c_repo.add(Datum.string_(v.info.repo))
-                    c_created.add(ts(v.info.created_at))
-                    c_first.add(ts(c.first_seen))
-                    c_found.add(Datum.string_(String(c.signals, " / ", v.how)))
-                    c_stars.add(Datum.long_(v.info.stars))
-                    c_forks.add(Datum.long_(v.info.forks))
-                    c_license.add(str_or_null(v.info.license))
-                    c_branch.add(str_or_null(v.info.default_branch))
-                    c_desc.add(str_or_null(v.info.description))
-                    c_size.add(Datum.long_(v.info.size_kb))
-                    c_lang.add(str_or_null(v.info.language))
-                    c_fork.add(Datum.bool_(v.info.fork))
-                    c_topics.add(json_strings(v.info.topics))
-                    added += 1
+                    found_mojo.append(_Found(v.info.copy(), c.copy(), v.how))
                 # `remaining` is GitHub's X-RateLimit-Remaining: stop before
                 # the next call is refused.
                 if v.remaining == 0:
@@ -264,17 +295,22 @@ def find_repos(mut ctx: Ctx, d: Day) raises -> Int:
         k_how.add(str_or_null(how))
         k_first.add(ts(c.first_seen))
         k_sha.add(str_or_null(c.sha))
-    # `topics` is a list column, so this table's batch is built from column
-    # trees (`NestedBuilder`), not the flat `batch_of` used for the others.
-    # This snapshot of mojo.repos is what starts mojo_history's and
-    # mojo_versions' runs, for the repositories it adds.
-    if added > 0:
-        var trees = List[ColumnTree]()
-        for ref c in [c_repo^, c_created^, c_first^, c_found^, c_stars^, c_forks^, c_license^, c_branch^, c_desc^, c_size^, c_lang^, c_fork^]:
-            trees.append(c.build_tree())
-        trees.append(c_topics.build())
-        var id = append(ctx, repos_t, [batch_of_columns(trees^)])
-        ctx.log(String(added, " Mojo repositories added, snapshot ", id))
+    var added = 0
+    if len(found_mojo) > 0:
+        # The checks can take many minutes, and other runs (another day's,
+        # or another scheduler on the same warehouse) may have added some of
+        # these since `known` was read: look at mojo.repos again so a repo
+        # is never in it twice.
+        var now_known = _known(ctx, REPOS)
+        var batch = _repos_batch(found_mojo, now_known)
+        added = batch[1]
+        if added < len(found_mojo):
+            ctx.log(String(len(found_mojo) - added, " found repositories were added to mojo.repos meanwhile; left out"))
+        # This snapshot of mojo.repos is what starts mojo_history's and
+        # mojo_versions' runs, for the repositories it adds.
+        if added > 0:
+            var id = append(ctx, repos_t, [batch[0].copy()])
+            ctx.log(String(added, " Mojo repositories added, snapshot ", id))
     if len(k_repo) > 0:
         _ = append(ctx, checked_t, [batch_of([k_repo^, k_at^, k_out^, k_sig^, k_how^, k_first^, k_sha^])])
     return added

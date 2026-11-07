@@ -191,11 +191,28 @@ struct Overview(Movable):
         self.tool_bazel = List[Int64]()
 
 
+struct Recent(Movable):
+    """Per repository, in the order asked for (`Builder.recent`)."""
+
+    var commits30: List[Int64]
+    """Commits in the last 30 days."""
+    var lines_delta: List[Int64]
+    """The change in lines of Mojo over the 30 days: now, less the newest
+    commit at or before 30 days ago (0 for none)."""
+
+    def __init__(out self):
+        self.commits30 = List[Int64]()
+        self.lines_delta = List[Int64]()
+
+
 struct Builder(Movable):
     var now_days: Int
     var months: Int
     """How many months the cells cover, from `BASE_MONTH` to this month."""
     var accs: List[RepoAcc]
+    var ids: Dict[String, Int]
+    """Each repository's index in `accs`, by name: one accumulator per name,
+    however many rows of mojo.repos name it."""
     var cell_seq: List[Int64]
     """`accs.len * months` cells: the newest commit's seq of the repository
     in the month, -1 for none."""
@@ -210,6 +227,7 @@ struct Builder(Movable):
         self.now_days = now_days
         self.months = max(month_of_days(now_days) - BASE_MONTH + 1, 1)
         self.accs = List[RepoAcc]()
+        self.ids = Dict[String, Int]()
         self.cell_seq = List[Int64]()
         self.cell_lines = List[Int64]()
         self.cell_tool = List[UInt8]()
@@ -219,13 +237,39 @@ struct Builder(Movable):
         self.cut_active = Int64(now_days - ACTIVE_DAYS) * DAY_US
 
     def add_repo(mut self, name: String) -> Int:
-        """A repository of mojo.repos; the id to give `add_commit`."""
+        """A repository of mojo.repos; the id to give `add_commit`. A name
+        added before keeps its id, so a duplicated row adds no second
+        accumulator."""
+        var known = self.ids.get(name, -1)
+        if known >= 0:
+            return known
+        self.ids[name] = len(self.accs)
         self.accs.append(RepoAcc(name, 0, 0, -1, 0, 0, String(), -1, 0, 0, 0, String(), 0))
         var n = len(self.cell_seq) + self.months
         self.cell_seq.resize(n, -1)
         self.cell_lines.resize(n, 0)
         self.cell_tool.resize(n, 0)
         return len(self.accs) - 1
+
+    def id_of(self, name: String) -> Int:
+        """The id `add_repo` gave `name`, or -1."""
+        return self.ids.get(name, -1)
+
+    def recent(self, names: List[String]) -> Recent:
+        """The last 30 days of each of `names`, in that order, joined by
+        name: whatever order the caller sorted its repositories in, the
+        numbers stay with their names. A name never added gets zeros."""
+        var r = Recent()
+        for ref n in names:
+            var id = self.id_of(n)
+            if id < 0:
+                r.commits30.append(0)
+                r.lines_delta.append(0)
+                continue
+            ref a = self.accs[id]
+            r.commits30.append(Int64(a.commits30))
+            r.lines_delta.append(a.last_lines - (a.cut_lines if a.cut_seq >= 0 else 0))
+        return r^
 
     def add_commit(
         mut self,
