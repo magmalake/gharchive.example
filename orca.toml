@@ -15,30 +15,33 @@ max_runs = 1
 fills = "all"
 fill_order = "oldest"
 fill_max_runs = 1
-# DISTA_WORKER_SLOTS: dista workers in one process, 4 on the CAX21 (4 vCPU,
-# 8 GB). GHARCHIVE_PARALLEL: downloads at once; its default of 16 is sized
-# for four AWS instances and took the CAX21 to 99.6% memory (the watchdog
-# paused everything). For an import on the CAX41 use 14 and 16 (edit, deploy,
-# register), then back to 4 and 4.
-env = { DISTA_WORKER_SLOTS = "4", GHARCHIVE_PARALLEL = "4" }
+# DISTA_WORKER_SLOTS: dista workers in one process, 3 on the CAX21 (4 vCPU,
+# 8 GB). GHARCHIVE_PARALLEL: hours in flight at once; its default of 16 is
+# sized for four AWS instances, and an hour in flight takes about 1 GB
+# (processes of 2 to 4.4 GB), so 16 took the CAX21 to 99.6% memory and OOM.
+# Raise both on a bigger server (an import on the CAX41: 14 and 14; edit,
+# deploy, register), then back to 3 and 3.
+env = { DISTA_WORKER_SLOTS = "3", GHARCHIVE_PARALLEL = "3" }
 
 [pipelines.gharchive_index]
-env = { DISTA_WORKER_SLOTS = "4" }
+env = { DISTA_WORKER_SLOTS = "3" }
 
 [pipelines.mojo_repos]
 # With a token mojo_repos checks 1000 candidates a run, 25 without.
 secrets = { GITHUB_TOKEN = "orca/github-token" }
 
 [pipelines.mojo_history]
-env = { DISTA_WORKER_SLOTS = "4" }
+env = { DISTA_WORKER_SLOTS = "3" }
 
 [pipelines.mojo_versions]
 # Blobless clones of the repositories whose version is unknown, one dista
-# task each; it calls no GitHub API, so it needs no token.
-env = { DISTA_WORKER_SLOTS = "4" }
+# task each; no GitHub API, so no token.
+env = { DISTA_WORKER_SLOTS = "3" }
 
 [pipelines.mojo_activity]
-env = { DISTA_WORKER_SLOTS = "4" }
+env = { DISTA_WORKER_SLOTS = "3" }
 
-# Mondays at 06:00 UTC. A GITHUB_TOKEN would raise its rate limit; none is set.
+# Mondays at 06:00 UTC; one GET /repos/{owner}/{repo} per repository, which
+# unauthenticated is 60 an hour.
 [pipelines.mojo_stats]
+secrets = { GITHUB_TOKEN = "orca/github-token" }
