@@ -277,6 +277,16 @@ later), re-run the day, which already succeeded:
 Set `GITHUB_TOKEN` to lift the limit. Stop everything with
 `kill` on the scheduler's and UI's PIDs and `pg_ctl -D build/pg stop`.
 
+### Registering on the server
+
+`orca.toml` at the repository root says how each scheduled pipeline runs
+(`max_runs`, fills, `DISTA_WORKER_SLOTS`, secrets), each setting with a
+comment. `Dockerfile.orca` puts it in the image at `/opt/orca/orca.toml`
+(`ORCA_CONFIG`), next to the pipelines (`ORCA_PIPELINES_DIR`), so on the
+server registering is `docker exec scheduler orca register` (orca after
+0.10.0). To change a setting: edit `orca.toml`, merge, deploy the new image,
+register again. `mojo_retool` is a one-off and isn't in the file.
+
 ### What a local run produced
 
 On 2024-06-12, hours 15 and 17: 476,227 events (154 MB of Parquet), 23

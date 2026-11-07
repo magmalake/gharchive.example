@@ -1,0 +1,41 @@
+# How the census's pipelines run under orca. `orca register` (no arguments) in
+# the scheduler container reads this file: the image has it at
+# /opt/orca/orca.toml (ORCA_CONFIG) and the binaries at /opt/orca/pipelines.
+# To change a setting: edit this file, merge, deploy the new image, register
+# again. magmalake/orca.mojo docs/orca-toml.md and docs/hetzner.md say more.
+
+[defaults]
+# One run of a pipeline at a time, until iceberg-mojo 0.11.1 is pinned
+# everywhere (magmalake/orca.mojo#164: concurrent commits to one table).
+max_runs = 1
+
+[pipelines.gharchive]
+# Fill the whole range (from the first partition to yesterday) by itself,
+# oldest day first, one fill run at a time on top of max_runs.
+fills = "all"
+fill_order = "oldest"
+fill_max_runs = 1
+# dista workers in one process: 4 on the CAX21 (the default server); an import
+# on the CAX41 registers 14 (edit, deploy, register), then back to 4.
+env = { DISTA_WORKER_SLOTS = "4" }
+
+[pipelines.gharchive_index]
+env = { DISTA_WORKER_SLOTS = "4" }
+
+[pipelines.mojo_repos]
+# With a token mojo_repos checks 1000 candidates a run, 25 without.
+secrets = { GITHUB_TOKEN = "orca/github-token" }
+
+[pipelines.mojo_history]
+env = { DISTA_WORKER_SLOTS = "4" }
+
+[pipelines.mojo_versions]
+# Blobless clones of the repositories whose version is unknown, one dista
+# task each; it calls no GitHub API, so it needs no token.
+env = { DISTA_WORKER_SLOTS = "4" }
+
+[pipelines.mojo_activity]
+env = { DISTA_WORKER_SLOTS = "4" }
+
+# Mondays at 06:00 UTC. A GITHUB_TOKEN would raise its rate limit; none is set.
+[pipelines.mojo_stats]
