@@ -109,7 +109,27 @@ GH Archive ──gharchive──▶ gharchive.events ──mojo_repos──▶ m
   detected version with its source ("24.4, from CI"), `no-manifest` apart
   from `unknown`, and the estimate as "~24.3 by date" (the Overview's donuts
   and `/repos?version=` count it with `?estimate=1`, off by default).
-  `tools/head_versions.mojo` tries the readers on named repositories.
+  The same read collects the dependencies HEAD's manifests declare
+  (`deps.mojo`: the root `pixi.toml`, `mojoproject.toml`, `pyproject.toml`,
+  `requirements*.txt`, and a `recipe.yaml` at the root or in `recipe/`,
+  `recipes/`, `conda/`) into `mojo.repo_deps`: a row per dependency
+  (`depends`, with its table, kind `conda`/`pypi`/`git`/`url`/`path`, and
+  the `owner/name` of a GitHub URL) and per name the repository publishes
+  (`provides`: `[package]`, recipe, pyproject or workspace name), replaced
+  with its `mojo.repo_versions` row, whose `declared_deps` counts them
+  (toolchain left out; null for a row read before dependencies were). The
+  console resolves them to census repositories at each build
+  (`deps.resolve`: GitHub URL, then a published package name, then a unique
+  repository name) and shows "Depends on" (Mojo libraries, of the declared
+  total) and "Used by" on each repo page, a Used by column in the Repos
+  table and "Most depended on" on the Overview. To fill them for the
+  repositories read before (new ones get them from their first run), after
+  deploying the image: `docker exec scheduler orca register` (the step now
+  reads and writes `mojo.repo_deps`), then `docker exec scheduler orca
+  backfill --rerun mojo_versions @all` (runs of 50; the console picks the
+  rows up at its next refresh).
+  `tools/head_versions.mojo` tries the readers on named repositories and
+  prints the dependency rows.
 - **`pipelines/mojo_activity.mojo`**: daily, a sensor on
   `gharchive.repo_hour`, `gharchive.releases` and `mojo.repos`, no API calls
   and no event bytes. For each day, every repository in

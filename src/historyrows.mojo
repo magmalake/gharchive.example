@@ -4,12 +4,14 @@ from iceberg.batch import ColumnBuilder, batch_of
 from iceberg.values import Datum
 from parquet import RecordBatch
 
-from cols import bool_at, col, i64_at, str_at
+from cols import bool_at, col, has_col, i64_at, is_valid, str_at
+from deps import Dep, RepoDep
 from headversion import HeadVersion
 from history import CommitRow, MigrationRow, TagRow
 from lake import (
     commits_schema,
     migrations_schema,
+    repo_deps_schema,
     repo_versions_schema,
     str_or_null,
     tags_schema,
@@ -146,9 +148,10 @@ def tags_batch(rows: List[TagRow]) raises -> RecordBatch:
 
 
 def head_version_rows(b: RecordBatch) raises -> List[HeadVersion]:
-    """The rows of a scanned `mojo.repo_versions` batch (`error` is empty).
-    `read_at` is the second column but the last field of `HeadVersion`,
-    hence the out-of-order indexes."""
+    """The rows of a scanned `mojo.repo_versions` batch (`error` and `deps`
+    are empty). `read_at` is the second column but a late field of
+    `HeadVersion`, hence the out-of-order indexes. `declared_deps` is -1
+    where it is null, and in a batch from before the column was added."""
     var out = List[HeadVersion]()
     var c = List[Int]()
     for name in [
@@ -156,14 +159,18 @@ def head_version_rows(b: RecordBatch) raises -> List[HeadVersion]:
         "version_file", "version_estimate", "estimate_source", "last_mojo_commit",
     ]:
         c.append(col(b, name))
+    var c_deps = col(b, "declared_deps") if has_col(b, "declared_deps") else -1
     for r in range(b.num_rows):
+        var declared = Int64(-1)
+        if c_deps >= 0 and is_valid(b.column(c_deps), r):
+            declared = i64_at(b.column(c_deps), r)
         out.append(
             HeadVersion(
                 str_at(b.column(c[0]), r), String(), str_at(b.column(c[2]), r),
                 str_at(b.column(c[3]), r), str_at(b.column(c[4]), r),
                 str_at(b.column(c[5]), r), str_at(b.column(c[6]), r),
                 str_at(b.column(c[7]), r), i64_at(b.column(c[8]), r),
-                i64_at(b.column(c[1]), r),
+                i64_at(b.column(c[1]), r), declared, String(),
             )
         )
     return out^
@@ -173,7 +180,7 @@ def head_versions_batch(rows: List[HeadVersion]) raises -> RecordBatch:
     """`rows` as a batch of `mojo.repo_versions`."""
     var s = repo_versions_schema()
     var cs = List[ColumnBuilder]()
-    for i in range(9):
+    for i in range(10):
         cs.append(ColumnBuilder.of(s, i + 1))
     for ref r in rows:
         cs[0].add(Datum.string_(r.repo))
@@ -185,4 +192,45 @@ def head_versions_batch(rows: List[HeadVersion]) raises -> RecordBatch:
         cs[6].add(str_or_null(r.estimate))
         cs[7].add(str_or_null(r.estimate_source))
         cs[8].add(ts_or_null(r.last_mojo_commit))
+        cs[9].add(Datum.long_(r.declared_deps) if r.declared_deps >= 0 else Datum.none())
+    return batch_of(cs)
+
+
+def repo_dep_rows(b: RecordBatch) raises -> List[RepoDep]:
+    """The rows of a scanned `mojo.repo_deps` batch."""
+    var out = List[RepoDep]()
+    var c = List[Int]()
+    for name in [
+        "repo", "read_at", "relation", "kind", "dep_name", "dep_repo", "section", "file",
+    ]:
+        c.append(col(b, name))
+    for r in range(b.num_rows):
+        out.append(
+            RepoDep(
+                str_at(b.column(c[0]), r), i64_at(b.column(c[1]), r),
+                Dep(
+                    str_at(b.column(c[2]), r), str_at(b.column(c[3]), r),
+                    str_at(b.column(c[4]), r), str_at(b.column(c[5]), r),
+                    str_at(b.column(c[6]), r), str_at(b.column(c[7]), r),
+                ),
+            )
+        )
+    return out^
+
+
+def repo_deps_batch(rows: List[RepoDep]) raises -> RecordBatch:
+    """`rows` as a batch of `mojo.repo_deps`."""
+    var s = repo_deps_schema()
+    var cs = List[ColumnBuilder]()
+    for i in range(8):
+        cs.append(ColumnBuilder.of(s, i + 1))
+    for ref r in rows:
+        cs[0].add(Datum.string_(r.repo))
+        cs[1].add(ts(r.read_at))
+        cs[2].add(Datum.string_(r.dep.relation))
+        cs[3].add(Datum.string_(r.dep.kind))
+        cs[4].add(Datum.string_(r.dep.name))
+        cs[5].add(str_or_null(r.dep.dep_repo))
+        cs[6].add(str_or_null(r.dep.section))
+        cs[7].add(Datum.string_(r.dep.file))
     return batch_of(cs)

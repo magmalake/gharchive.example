@@ -21,10 +21,13 @@ from listing import (
 )
 from overview import (
     DAY_US,
+    RISING_FORK_WEIGHT,
+    RISING_USED_BY_WEIGHT,
     Builder,
     bucket_color,
     month_label,
     month_of_days,
+    rising_score,
     tool_code,
     top_gains,
 )
@@ -268,6 +271,30 @@ def test_select() raises:
     assert_equal(len(unknown), 1)
     assert_equal(unknown[0], 3)
     assert_equal(len(select_repos(parse_list_query("", "", "9.x", ""), lines, files, stars, fams, active)), 0)
+    # Forks and used-by sort when their arrays are given.
+    var forks: List[Int64] = [1, 0, 5, 2, 0]
+    var used: List[Int64] = [0, 3, 0, 1, 3]
+    var no30 = List[Int64]()
+    var by_forks = select_repos(parse_list_query("forks", "", "", ""), lines, files, stars, fams, active, List[String](), List[Int](), no30, forks, used)
+    var want4: List[Int] = [2, 3, 0, 1, 4]
+    for i in range(5):
+        assert_equal(by_forks[i], want4[i])
+    var by_used = select_repos(parse_list_query("used_by", "", "", ""), lines, files, stars, fams, active, List[String](), List[Int](), no30, forks, used)
+    var want5: List[Int] = [1, 4, 3, 0, 2]
+    for i in range(5):
+        assert_equal(by_used[i], want5[i])
+
+
+def test_rising_score() raises:
+    assert_equal(rising_score(10, 0, 0), 10)
+    assert_equal(rising_score(10, 2, 1), 10 + 2 * RISING_FORK_WEIGHT + RISING_USED_BY_WEIGHT)
+    # Used by alone doesn't make a repo rise.
+    assert_equal(rising_score(0, 0, 40), 0)
+    assert_equal(rising_score(0, 1, 0), RISING_FORK_WEIGHT)
+    var scores: List[Int64] = [rising_score(30, 0, 0), rising_score(20, 2, 2), rising_score(0, 0, 9)]
+    var top = top_gains(scores, 10)
+    assert_equal(len(top), 2)
+    assert_equal(top[0], 1)  # 20 + 6 + 10 beats 30
 
 
 def test_compact() raises:

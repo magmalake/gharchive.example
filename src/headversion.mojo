@@ -10,10 +10,16 @@ files, READMEs. `versions.pick_version` chooses by precedence and
 a Mojo file into the release current then, kept apart as the estimate.
 `modular/modular` is cloned shallow (it is gigabytes) and states its own
 version in `Mojo/pixi.lock`, source `repo`.
+
+The same read collects the dependencies HEAD's manifests declare and the
+names the repository publishes itself under (`deps.manifest_deps`: the
+root `pixi.toml`, `mojoproject.toml`, `pyproject.toml`, `requirements*.txt`
+and a `recipe.yaml` of its own), the rows of `mojo.repo_deps`.
 """
 
 from std.os import getenv
 
+from deps import Dep, declared_count, dedupe, encode_deps, is_recipe, manifest_deps
 from history import _sh, _workdir, safe_repo
 from mojo_releases import estimate_version
 from versions import (
@@ -54,13 +60,21 @@ struct HeadVersion(Copyable, Movable):
     var estimate_source: String
     var last_mojo_commit: Int64
     var read_at: Int64
+    var declared_deps: Int64
+    """Distinct dependencies HEAD's manifests declare, the toolchain left
+    out (`deps.declared_count`); -1 (null in the table) for a row read
+    before dependencies were."""
+    var deps: String
+    """The rows of `mojo.repo_deps` for this repository, as
+    `deps.encode_deps` writes them; not a column of `mojo.repo_versions`
+    (and empty in rows read back from it)."""
 
     @staticmethod
     def empty(repo: String) -> Self:
         """A row with nothing found and no error."""
         return Self(
             repo, String(), String(), String(), String(), String(), String(),
-            String(), 0, 0,
+            String(), 0, 0, -1, String(),
         )
 
 
@@ -81,6 +95,9 @@ struct Candidates(Copyable, Movable):
     var ci: List[String]
     var docker: List[String]
     var readme: List[String]
+    var deps: List[String]
+    """The files dependencies are read from: the manifests and the
+    repository's own recipe (`deps.is_recipe`)."""
 
     def __init__(out self):
         self.lock = List[String]()
@@ -89,6 +106,7 @@ struct Candidates(Copyable, Movable):
         self.ci = List[String]()
         self.docker = List[String]()
         self.readme = List[String]()
+        self.deps = List[String]()
 
 
 def classify(paths: List[String]) -> Candidates:
@@ -109,6 +127,9 @@ def classify(paths: List[String]) -> Candidates:
             or p == "requirements.txt" or p == "requirements-dev.txt"
         ):
             c.manifest.append(p)
+            c.deps.append(p)
+        elif is_recipe(p):
+            c.deps.append(p)
         elif root and (
             p == ".mojoversion" or p == ".mojo-version" or p == ".tool-versions"
             or p == "mojo-version" or p == "MOJO_VERSION" or p == "mojo_version.txt"
@@ -163,15 +184,26 @@ def _quoted(path: String) -> Bool:
     return "'" not in path
 
 
+def _text(dir: String, path: String, mut cache: Dict[String, String]) raises -> String:
+    """`_show` of `path` at HEAD, fetched once: a manifest is read for its
+    version and again for its dependencies."""
+    if path in cache:
+        return cache[path]
+    var text = _show(dir, "HEAD", path)
+    cache[path] = text
+    return text^
+
+
 def _first(
-    dir: String, paths: List[String], kind: String, mut file: String
+    dir: String, paths: List[String], kind: String, mut file: String,
+    mut cache: Dict[String, String],
 ) raises -> String:
     """The first version `kind` ('lock', 'manifest', 'file', 'script' or
     'readme') reads from `paths`; `file` is set to its path."""
     for p in paths:
         if not _quoted(p):
             continue
-        var text = _show(dir, "HEAD", p)
+        var text = _text(dir, p, cache)
         if text.byte_length() == 0:
             continue
         # `pyproject.toml` and `requirements.txt` are in the manifest kind
@@ -260,12 +292,22 @@ def _read(repo: String, dir: String, mut out: HeadVersion) raises:
     var f_ci = String()
     var f_docker = String()
     var f_readme = String()
-    var lock = _first(dir, c.lock, "lock", f_lock)
-    var manifest = _first(dir, c.manifest, "manifest", f_manifest)
-    var vfile = _first(dir, c.file, "file", f_file)
-    var ci = _first(dir, c.ci, "script", f_ci)
-    var docker = _first(dir, c.docker, "script", f_docker)
-    var readme = _first(dir, c.readme, "readme", f_readme)
+    var cache = Dict[String, String]()
+    var lock = _first(dir, c.lock, "lock", f_lock, cache)
+    var manifest = _first(dir, c.manifest, "manifest", f_manifest, cache)
+    var vfile = _first(dir, c.file, "file", f_file, cache)
+    var ci = _first(dir, c.ci, "script", f_ci, cache)
+    var docker = _first(dir, c.docker, "script", f_docker, cache)
+    var readme = _first(dir, c.readme, "readme", f_readme, cache)
+    # Every manifest is read for dependencies, not only the first that names
+    # a version: a `pyproject.toml` beside the `pixi.toml` adds its own.
+    var rows = List[Dep]()
+    for p in c.deps:
+        if _quoted(p):
+            rows.extend(manifest_deps(p, _text(dir, p, cache)))
+    var unique = dedupe(rows)
+    out.declared_deps = Int64(declared_count(unique))
+    out.deps = encode_deps(unique)
     var picked = pick_head(lock, manifest, vfile, ci, docker, readme)
     out.version = picked[0]
     out.source = picked[1]

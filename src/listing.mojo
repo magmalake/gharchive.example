@@ -1,7 +1,7 @@
 """The Repos table's query: which column it sorts by, which filters it has,
 and the repositories that pass, from plain arrays so the tests need no lake.
 
-    /repos?sort=lines|files|stars|commits30&dir=asc|desc&version=1.2&active=1y&new=month
+    /repos?sort=lines|files|stars|forks|used_by|commits30&dir=asc|desc&version=1.2&active=1y&new=month
 
 The default is the order the repositories come in (most lines of Mojo
 first), which is `sort=lines&dir=desc`.
@@ -11,7 +11,8 @@ first), which is `sort=lines&dir=desc`.
 @fieldwise_init
 struct ListQuery(Copyable, Movable):
     var sort: String
-    """`lines`, `files`, `stars` or `commits30` (commits in 30 days)."""
+    """`lines`, `files`, `stars`, `forks`, `used_by` (census repos that
+    depend on it) or `commits30` (commits in 30 days)."""
     var asc: Bool
     var version: String
     """A version bucket (`pre-1.0`, `1.2`, `no-manifest`, `unknown`, `other`) or an old
@@ -43,7 +44,7 @@ def parse_list_query(
     """The query from the raw parameters; what isn't recognised is the
     default."""
     var s = String("lines")
-    if sort == "files" or sort == "stars" or sort == "commits30":
+    if sort == "files" or sort == "stars" or sort == "forks" or sort == "used_by" or sort == "commits30":
         s = sort
     var n = String()
     if new == "month" or new == "last-month" or new == "30d":
@@ -124,6 +125,8 @@ def select_repos(
     legacy: List[String] = List[String](),
     news: List[Int] = List[Int](),
     commits30: List[Int64] = List[Int64](),
+    forks: List[Int64] = List[Int64](),
+    used_by: List[Int64] = List[Int64](),
 ) -> List[Int]:
     """The indices of the repositories that pass `q`'s filters, in its
     order. The arrays are one entry per repository, in the default order;
@@ -146,6 +149,10 @@ def select_repos(
         return _merge_sort(idx^, stars, q.asc)
     if q.sort == "commits30" and len(commits30) == len(lines):
         return _merge_sort(idx^, commits30, q.asc)
+    if q.sort == "forks" and len(forks) == len(lines):
+        return _merge_sort(idx^, forks, q.asc)
+    if q.sort == "used_by" and len(used_by) == len(lines):
+        return _merge_sort(idx^, used_by, q.asc)
     return _merge_sort(idx^, lines, q.asc)
 
 

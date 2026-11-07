@@ -21,6 +21,7 @@ comptime RELEASES = "mojo.releases"
 comptime ACTIVITY_REPOS = "mojo.activity_repos"
 comptime TAGS = "mojo.tags"
 comptime REPO_VERSIONS = "mojo.repo_versions"
+comptime REPO_DEPS = "mojo.repo_deps"
 comptime CANDIDATES = "gharchive.candidates"
 comptime REPO_HOUR = "gharchive.repo_hour"
 comptime GH_RELEASES = "gharchive.releases"
@@ -183,14 +184,37 @@ comptime REPO_VERSIONS_SCHEMA = (
     '{"id":6,"name":"version_file","required":false,"type":"string"},'
     '{"id":7,"name":"version_estimate","required":false,"type":"string"},'
     '{"id":8,"name":"estimate_source","required":false,"type":"string"},'
-    '{"id":9,"name":"last_mojo_commit","required":false,"type":"timestamptz"}]}'
+    '{"id":9,"name":"last_mojo_commit","required":false,"type":"timestamptz"},'
+    '{"id":10,"name":"declared_deps","required":false,"type":"long"}]}'
 )
 """One row per repository (mojo_versions): the Mojo version its HEAD states
 and where (`lock`, `manifest`, `file`, `ci`, `docker`, `readme`, `repo`), the
 file it was read from, and, apart from it, the release current at the last
 commit that touched a Mojo file (`version_estimate`, source `date`). A
 repository with a manifest still has its row; the console prefers the
-version mojo.commits has and falls back to this one."""
+version mojo.commits has and falls back to this one. `declared_deps` came
+later (ensure_table adds it): the number of distinct dependencies HEAD's
+manifests declare, toolchain left out, null for a row read before."""
+
+comptime REPO_DEPS_SCHEMA = (
+    '{"schema-id":0,"type":"struct","fields":['
+    '{"id":1,"name":"repo","required":true,"type":"string"},'
+    '{"id":2,"name":"read_at","required":true,"type":"timestamptz"},'
+    '{"id":3,"name":"relation","required":true,"type":"string"},'
+    '{"id":4,"name":"kind","required":true,"type":"string"},'
+    '{"id":5,"name":"dep_name","required":true,"type":"string"},'
+    '{"id":6,"name":"dep_repo","required":false,"type":"string"},'
+    '{"id":7,"name":"section","required":false,"type":"string"},'
+    '{"id":8,"name":"file","required":true,"type":"string"}]}'
+)
+"""What each repository's manifests at HEAD declare (mojo_versions, beside
+mojo.repo_versions and replaced with it): a row per dependency (`relation`
+`depends`; `kind` `conda`, `pypi`, `git`, `url` or `path`; `dep_repo` the
+`owner/name` of a GitHub URL) and per name the repository publishes itself
+under (`provides`; `package`, `recipe`, `pyproject` or `workspace`), with
+the table or requirements list (`section`) and the file. Which of them are
+Mojo libraries of the census, and the reverse counts, the console works out
+(`deps.resolve`), so they follow mojo.repos without a rerun."""
 
 comptime CANDIDATES_SCHEMA = (
     '{"schema-id":0,"type":"struct","fields":['
@@ -366,6 +390,10 @@ def tags_schema() raises -> Schema:
 
 def repo_versions_schema() raises -> Schema:
     return Schema.parse(REPO_VERSIONS_SCHEMA)
+
+
+def repo_deps_schema() raises -> Schema:
+    return Schema.parse(REPO_DEPS_SCHEMA)
 
 
 def checked_schema() raises -> Schema:

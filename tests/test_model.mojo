@@ -16,8 +16,11 @@ from iceberg.schema import Schema
 from iceberg.values import Datum
 
 from days import days_of
+from deps import Dep, RepoDep
+from historyrows import repo_deps_batch
 from lake import (
     commits_schema,
+    repo_deps_schema,
     repo_versions_schema,
     str_or_null,
     ts,
@@ -107,7 +110,7 @@ def test_libraries_with_head_versions() raises:
     # o/old has a CI version, o/guess only an estimate.
     var vs = repo_versions_schema()
     var v = List[ColumnBuilder]()
-    for i in range(9):
+    for i in range(10):
         v.append(ColumnBuilder.of(vs, i + 1))
     var vrows: List[Tuple[String, String, String, String, String]] = [
         ("o/locked", "1.0", "readme", "README.md", "24.2"),
@@ -125,7 +128,22 @@ def test_libraries_with_head_versions() raises:
         v[6].add(str_or_null(r[4]))
         v[7].add(Datum.string_("date"))
         v[8].add(ts_or_null(_us("2024-03-01")))
+        # o/unpinned was read before dependencies were: null.
+        v[9].add(Datum.none() if r[0] == "o/unpinned" else Datum.long_(Int64(1) if r[0] != "o/locked" else Int64(0)))
     _ = rv_t.append([batch_of(v)])
+    # mojo.repo_deps: o/old names o/locked by URL (another case), o/guess by
+    # the name o/locked publishes; the toolchain and a repo's own name don't
+    # count.
+    var deps_t = cat.create_table("mojo", "repo_deps", repo_deps_schema())
+    var at = _us("2026-11-05")
+    var drows: List[RepoDep] = [
+        RepoDep("o/locked", at, Dep("provides", "package", "locked-lib", "", "package", "pixi.toml")),
+        RepoDep("o/locked", at, Dep("depends", "conda", "mojo", "", "dependencies", "pixi.toml")),
+        RepoDep("o/old", at, Dep("depends", "git", "lockedlib", "O/Locked", "dependencies", "pixi.toml")),
+        RepoDep("o/guess", at, Dep("depends", "conda", "locked_lib", "", "requirements.run", "recipe.yaml")),
+        RepoDep("o/guess", at, Dep("depends", "conda", "guess", "", "dependencies", "pixi.toml")),
+    ]
+    _ = deps_t.append([repo_deps_batch(drows)])
 
     _ = setenv("ORCA_WAREHOUSE", dir)
     var b = Builder(Int(days_of("2026-11-05")))
@@ -134,17 +152,26 @@ def test_libraries_with_head_versions() raises:
     var seen = 0
     for ref l in libs:
         if l.repo == "o/locked":
+            assert_equal(len(l.used_by), 2)
+            assert_equal(l.used_by[0], "o/guess")
+            assert_equal(l.declared_deps, 0)
+            assert_equal(len(l.depends_on), 0)
             assert_equal(l.mojo_version, "1.1.0")
             assert_equal(l.version_source, "pixi.lock")
             assert_equal(l.version_estimate, "24.2")
             seen += 1
         elif l.repo == "o/old":
+            assert_equal(len(l.depends_on), 1)
+            assert_equal(l.depends_on[0], "o/locked")
+            assert_equal(l.declared_deps, 1)
             assert_equal(l.mojo_version, "24.4.0")
             assert_equal(l.version_source, "ci")
             assert_equal(l.version_file, ".github/workflows/ci.yml")
             assert_equal(l.tooling, "none")
             seen += 1
         elif l.repo == "o/guess":
+            assert_equal(len(l.depends_on), 1)
+            assert_equal(len(l.declared), 2)
             assert_equal(l.mojo_version, "")
             assert_equal(l.version_source, "")
             assert_equal(l.version_estimate, "0.4")
@@ -156,6 +183,7 @@ def test_libraries_with_head_versions() raises:
         elif l.repo == "o/unpinned":
             # A pixi manifest that names no version: the README's is used.
             assert_equal(l.mojo_version, "24.1")
+            assert_equal(l.declared_deps, -1)
             seen += 1
     assert_equal(seen, 5)
     var ov = b.finish(len(libs))

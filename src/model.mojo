@@ -1,9 +1,13 @@
 """What the console shows, read from the lake: one `Library` per repository
 of mojo.repos (a repository in it twice is one), with what mojo.commits and mojo.migrations say about it, and its
-latest row of mojo.repo_stats; and per repository its activity by month
-(mojo.activity), releases (mojo.releases) and tags (mojo.tags)."""
+latest row of mojo.repo_stats, and its dependencies (mojo.repo_deps,
+resolved to the census's repositories here); and per repository its
+activity by month (mojo.activity), releases (mojo.releases) and tags
+(mojo.tags)."""
 
 from cols import bool_at, col, has_col, i32_at, i64_at, is_valid, str_at, strs_at
+from deps import RepoDep, resolve
+from historyrows import repo_dep_rows
 from days import day_text
 from jscan import micros_to_iso
 from lake import exists, load, try_load
@@ -48,6 +52,16 @@ struct Library(Copyable, Movable):
     var version_estimate: String
     """The release current at the last commit that touched a Mojo file, by
     date (mojo.repo_versions); a guess, kept apart from `mojo_version`."""
+    var declared_deps: Int64
+    """Distinct dependencies its manifests declare at HEAD, toolchain left
+    out; -1 when its dependencies haven't been read."""
+    var declared: List[String]
+    """Their names."""
+    var depends_on: List[String]
+    """The census repositories among them (`deps.resolve`): the Mojo
+    libraries it depends on."""
+    var used_by: List[String]
+    """The census repositories that depend on it."""
 
 
 @fieldwise_init
@@ -58,6 +72,8 @@ struct RepoVersion(Copyable, Movable):
     var source: String
     var file: String
     var estimate: String
+    var declared_deps: Int64
+    """-1 for null: read before dependencies were."""
 
 
 @fieldwise_init
@@ -130,6 +146,7 @@ def libraries(mut ob: Builder) raises -> List[Library]:
                 strs_at(b, c_topics, r) if c_topics >= 0 else List[String](),
                 0, 0, 0, False, String(), String(),
                 String(), String(), String(),
+                -1, List[String](), List[String](), List[String](),
             )
             if at >= 0:
                 out[at] = lib^
@@ -189,7 +206,9 @@ def libraries(mut ob: Builder) raises -> List[Library]:
                 lib.version_source = rv.source
                 lib.version_file = rv.file
             lib.version_estimate = rv.estimate
+            lib.declared_deps = rv.declared_deps
         ob.set_version(ids[i], lib.mojo_version, lib.version_estimate)
+    _dependencies(out)
     # Biggest first.
     for i in range(1, len(out)):
         var j = i
@@ -214,17 +233,47 @@ def repo_versions() raises -> Dict[String, RepoVersion]:
         var c_src = col(b, "version_source")
         var c_file = col(b, "version_file")
         var c_est = col(b, "version_estimate")
+        var c_deps = col(b, "declared_deps") if has_col(b, "declared_deps") else -1
         for r in range(b.num_rows):
             var repo = str_at(b.column(c_repo), r)
             var at = i64_at(b.column(c_at), r)
             if repo in read and read[repo] >= at:
                 continue
             read[repo] = at
+            var declared = Int64(-1)
+            if c_deps >= 0 and is_valid(b.column(c_deps), r):
+                declared = i64_at(b.column(c_deps), r)
             out[repo] = RepoVersion(
                 str_at(b.column(c_ver), r), str_at(b.column(c_src), r),
                 str_at(b.column(c_file), r), str_at(b.column(c_est), r),
+                declared,
             )
     return out^
+
+
+def _dependencies(mut libs: List[Library]) raises:
+    """Each library's dependencies from mojo.repo_deps, and which of them,
+    and of the libraries that depend on it, are census repositories
+    (`deps.resolve`). Worked out at every build rather than stored, so a
+    library found later is matched to the repositories that already name
+    it."""
+    var t = try_load("mojo", "repo_deps")
+    if not t:
+        return
+    var rows = List[RepoDep]()
+    for b in t.value().scan().to_batches():
+        rows.extend(repo_dep_rows(b))
+    var names = List[String]()
+    for ref l in libs:
+        names.append(l.repo)
+    var g = resolve(names, rows)
+    for ref l in libs:
+        if l.repo in g.declared:
+            l.declared = g.declared[l.repo].copy()
+        if l.repo in g.depends_on:
+            l.depends_on = g.depends_on[l.repo].copy()
+        if l.repo in g.used_by:
+            l.used_by = g.used_by[l.repo].copy()
 
 
 def _latest_stats(mut libs: List[Library], index: Dict[String, Int]) raises:
@@ -663,22 +712,35 @@ def read_days(mut src: Sources) raises:
     src.days = len(seen)
 
 
-def star_gains(since_day: Int) raises -> Dict[String, Int64]:
-    """Stars (WatchEvents) per repository on the days since `since_day`
-    (days since 1970-01-01), from mojo.activity."""
-    var out = Dict[String, Int64]()
+@fieldwise_init
+struct Gain(Copyable, Movable):
+    """What a repository gained over some days, from mojo.activity."""
+
+    var stars: Int64
+    """WatchEvents."""
+    var forks: Int64
+    """ForkEvents."""
+
+
+def gains_since(since_day: Int) raises -> Dict[String, Gain]:
+    """Stars and forks per repository on the days since `since_day` (days
+    since 1970-01-01), from mojo.activity; only repositories with some."""
+    var out = Dict[String, Gain]()
     var activity_table = try_load("mojo", "activity")
     if not activity_table:
         return out^
-    for b in activity_table.value().scan().select(["repo", "day", "stars"]).to_batches():
+    for b in activity_table.value().scan().select(["repo", "day", "stars", "forks"]).to_batches():
         var c_repo = col(b, "repo")
         var c_day = col(b, "day")
         var c_stars = col(b, "stars")
+        var c_forks = col(b, "forks")
         for r in range(b.num_rows):
             if Int(i32_at(b.column(c_day), r)) < since_day:
                 continue
-            var n = i64_at(b.column(c_stars), r)
-            if n > 0:
+            var s = i64_at(b.column(c_stars), r)
+            var f = i64_at(b.column(c_forks), r)
+            if s > 0 or f > 0:
                 var repo = str_at(b.column(c_repo), r)
-                out[repo] = out.get(repo, Int64(0)) + n
+                var g = out.get(repo, Gain(0, 0))
+                out[repo] = Gain(g.stars + s, g.forks + f)
     return out^

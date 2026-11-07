@@ -1,10 +1,11 @@
 """The console: a flare app over mojo.repos, mojo.commits, mojo.migrations,
-mojo.repo_stats, mojo.activity, mojo.releases and mojo.tags.
+mojo.repo_stats, mojo.activity, mojo.releases, mojo.tags, mojo.repo_versions
+and mojo.repo_deps.
 
     PORT=8080 pixi run ./build/console
 
 Pages: `/` the overview (cards, repos per Mojo version, growth curves),
-`/repos` the repos by size and age (`?sort=lines|files|stars&dir=asc|desc`,
+`/repos` the repos by size and age (`?sort=lines|files|stars|forks|used_by&dir=asc|desc`,
 `?version=1.x`, `?active=1y`), `/search?q=` finds repos by name, GitHub topic
 or description, `/migrations` the migrations to each Mojo version over time,
 `/how` and `/how/optimizations` how the census is built,
@@ -63,6 +64,7 @@ from listing import (
     with_version,
 )
 from model import (
+    Gain,
     Library,
     Migration,
     MonthActivity,
@@ -78,12 +80,26 @@ from model import (
     migrations,
     read_days,
     read_sources,
+    gains_since,
     releases_all,
-    star_gains,
     versions_of,
 )
 from days import day_text
-from overview import ACTIVE_DAYS, Builder, Overview, bucket_color, bucket_of, family_of, month_of_days, tool_code, top_gains, unversioned
+from overview import (
+    ACTIVE_DAYS,
+    RISING_FORK_WEIGHT,
+    RISING_USED_BY_WEIGHT,
+    Builder,
+    Overview,
+    bucket_color,
+    bucket_of,
+    family_of,
+    month_of_days,
+    rising_score,
+    tool_code,
+    top_gains,
+    unversioned,
+)
 from swap import Swap, check_due, needs_build
 from search import search_score, sort_buckets, url_decode, version_bucket, version_family
 from versions import sort_versions, source_label, usable
@@ -347,6 +363,7 @@ comptime RETRY_SECS = 30
 """How soon to look again after a failed build or while nothing is built."""
 comptime RISING_SHOWN = 10
 comptime ACTIVE_SHOWN = 10
+comptime DEPENDED_SHOWN = 10
 
 
 struct RepoData(Copyable, Movable):
@@ -377,6 +394,9 @@ struct Cache(Movable):
     var lines: List[Int64]
     var files: List[Int64]
     var stars: List[Int64]
+    var forks: List[Int64]
+    var used_by: List[Int64]
+    """How many census repos depend on each repo."""
     var buckets: List[String]
     """`bucket_of` each repo's current Mojo version."""
     var families: List[String]
@@ -403,8 +423,18 @@ struct Cache(Movable):
     var active_lines: List[Int64]
     """Their net change in lines of Mojo over the 30 days."""
     var rising: List[String]
+    """The `RISING_SHOWN` repos with the highest `rising_score`."""
     var rising_gain: List[Int64]
+    """Stars gained in the last 30 days."""
+    var rising_forks: List[Int64]
+    """Forks gained in the last 30 days."""
+    var rising_used_by: List[Int64]
+    var rising_score: List[Int64]
     var rising_stars: List[Int64]
+    """Stars now."""
+    var depended: List[Int]
+    """Indices into `libs` of the `DEPENDED_SHOWN` repos the most census
+    repos depend on."""
     var sources: Sources
     var built_day: Int
     var built_at: Int64
@@ -416,6 +446,8 @@ struct Cache(Movable):
         self.lines = List[Int64]()
         self.files = List[Int64]()
         self.stars = List[Int64]()
+        self.forks = List[Int64]()
+        self.used_by = List[Int64]()
         self.buckets = List[String]()
         self.families = List[String]()
         self.est_buckets = List[String]()
@@ -433,7 +465,11 @@ struct Cache(Movable):
         self.active_lines = List[Int64]()
         self.rising = List[String]()
         self.rising_gain = List[Int64]()
+        self.rising_forks = List[Int64]()
+        self.rising_used_by = List[Int64]()
+        self.rising_score = List[Int64]()
         self.rising_stars = List[Int64]()
+        self.depended = List[Int]()
         self.sources = Sources()
         self.built_day = 0
         self.built_at = 0
@@ -450,11 +486,13 @@ struct Cache(Movable):
         var recent = b.recent(names)
         var commits30 = recent.commits30.copy()
         var lines_delta = recent.lines_delta.copy()
-        var gains = star_gains(today - 30)
+        var gains = gains_since(today - 30)
         var cutoff = Int64(today - ACTIVE_DAYS) * 86_400_000_000
         var lines = List[Int64]()
         var files = List[Int64]()
         var stars = List[Int64]()
+        var forks = List[Int64]()
+        var used_by = List[Int64]()
         var buckets = List[String]()
         var families = List[String]()
         var est_buckets = List[String]()
@@ -463,11 +501,13 @@ struct Cache(Movable):
         var now_month = month_of_days(today)
         var cut30 = Int64(today - 30) * 86_400_000_000
         var active = List[Bool]()
-        var gain_list = List[Int64]()
+        var score_list = List[Int64]()
         for ref l in libs:
             lines.append(l.mojo_lines)
             files.append(l.mojo_files)
             stars.append(l.stars)
+            forks.append(l.forks)
+            used_by.append(Int64(len(l.used_by)))
             var why = unversioned(l.commits, tool_code(l.tooling))
             buckets.append(bucket_of(l.mojo_version, why))
             families.append(family_of(l.mojo_version, why))
@@ -486,14 +526,23 @@ struct Cache(Movable):
                     bits |= NEW_30D
             news.append(bits)
             active.append(l.commits > 0 and l.last_commit >= cutoff)
-            gain_list.append(gains.get(l.repo, Int64(0)))
+            var g = gains.get(l.repo, Gain(0, 0))
+            score_list.append(rising_score(g.stars, g.forks, Int64(len(l.used_by))))
         self.rising = List[String]()
         self.rising_gain = List[Int64]()
+        self.rising_forks = List[Int64]()
+        self.rising_used_by = List[Int64]()
+        self.rising_score = List[Int64]()
         self.rising_stars = List[Int64]()
-        for i in top_gains(gain_list, RISING_SHOWN):
+        for i in top_gains(score_list, RISING_SHOWN):
+            var g = gains.get(libs[i].repo, Gain(0, 0))
             self.rising.append(libs[i].repo)
-            self.rising_gain.append(gain_list[i])
+            self.rising_gain.append(g.stars)
+            self.rising_forks.append(g.forks)
+            self.rising_used_by.append(Int64(len(libs[i].used_by)))
+            self.rising_score.append(score_list[i])
             self.rising_stars.append(libs[i].stars)
+        self.depended = top_gains(used_by, DEPENDED_SHOWN)
         var details = Dict[String, RepoData]()
         for e in histories().items():
             details[e.key] = RepoData()
@@ -528,6 +577,8 @@ struct Cache(Movable):
         self.lines = lines^
         self.files = files^
         self.stars = stars^
+        self.forks = forks^
+        self.used_by = used_by^
         self.buckets = buckets^
         self.families = families^
         self.est_buckets = est_buckets^
@@ -578,6 +629,7 @@ def _libs_table(
         "<th class=num>Commits</th>", _th("Commits, 30 days", "commits30", q, sortable) if len(c30) > 0 else String(),
         "<th>Age</th><th>Created</th>",
         "<th>Mojo version</th><th>Tooling</th>", _th("Stars", "stars", q, sortable),
+        _th("Forks", "forks", q, sortable), _th("Used by", "used_by", q, sortable),
         "</tr></thead><tbody>",
     )
     for i in idx:
@@ -590,7 +642,8 @@ def _libs_table(
             String("<td class=num>", c30[i], "</td>") if len(c30) > 0 else String(), "<td>",
             _age(l.created_at, today), "</td><td>", day(l.created_at),
             "</td><td class='mono soft'>", _version_cell(l), "</td><td>",
-            _or_dash(l.tooling), "</td><td class=num>", _n(l.stars), "</td></tr>",
+            _or_dash(l.tooling), "</td><td class=num>", _n(l.stars), "</td><td class=num>",
+            _n(l.forks), "</td><td class=num>", _n(Int64(len(l.used_by))), "</td></tr>",
         )
     h.write("</tbody></table></div>")
     return h^
@@ -720,6 +773,7 @@ def repos_page(req: Request, c: Cache) raises -> Response:
             q, c.lines, c.files, c.stars,
             c.est_buckets if q.estimate else c.buckets, c.active,
             c.est_families if q.estimate else c.families, c.news, c.commits30,
+            c.forks, c.used_by,
         )
         var h = String(
             "<h1>Mojo repos</h1><p class=sub>Mojo repos, versions and growth, counted",
@@ -1013,21 +1067,30 @@ def overview(req: Request, c: Cache) raises -> Response:
         # Rising and the most active repos, side by side.
         h.write("<div class=cols><div>")
         h.write(
-            "<h2>Rising</h2><p class=sub>The repos that gained the most stars in the last 30 days,",
-            " counted from GH Archive's WatchEvents on the days loaded so far.</p>",
+            "<h2>Rising</h2><p class=sub>The repos with the highest score over the last 30 days:",
+            " the stars and forks they gained (GH Archive's WatchEvents and ForkEvents on the",
+            " days loaded so far) and the census repos that depend on them.</p>",
         )
         if len(c.rising) > 0:
             h.write(
                 "<div class=tbl><table><thead><tr>",
-                "<th>Repository</th><th class=num>Stars, 30 days</th><th class=num>Stars</th></tr></thead><tbody>",
+                "<th>Repository</th><th class=num>Stars, 30 days</th><th class=num>Forks, 30 days</th>",
+                "<th class=num>Used by</th><th class=num>Score</th></tr></thead><tbody>",
             )
             for i in range(len(c.rising)):
                 h.write(
                     "<tr><td><a class=repo href='/repos/", html_escape(c.rising[i]), "'>",
                     html_escape(c.rising[i]), "</a></td><td class=num>", _signed(c.rising_gain[i]),
-                    "</td><td class=num>", _n(c.rising_stars[i]), "</td></tr>",
+                    "</td><td class=num>", _signed(c.rising_forks[i]),
+                    "</td><td class=num>", _n(c.rising_used_by[i]),
+                    "</td><td class=num>", _n(c.rising_score[i]), "</td></tr>",
                 )
             h.write("</tbody></table></div>")
+            h.write(
+                "<p class=mute>Score = stars gained + ", RISING_FORK_WEIGHT, " &times; forks gained + ",
+                RISING_USED_BY_WEIGHT, " &times; repos using it now; a repo needs a new star or fork",
+                " to be ranked.</p>",
+            )
         h.write(
             "</div><div><h2><a href='",
             html_escape(list_url(ListQuery(String("commits30"), False, String(), False, String(), False))),
@@ -1047,6 +1110,25 @@ def overview(req: Request, c: Cache) raises -> Response:
                 )
             h.write("</tbody></table></div>")
         h.write("</div></div>")
+        # The libraries the most census repos declare a dependency on.
+        if len(c.depended) > 0:
+            h.write(
+                "<div class=cols><div><h2><a href='",
+                html_escape(list_url(ListQuery(String("used_by"), False, String(), False, String(), False))),
+                "'>Most depended on</a></h2><p class=sub>The repos the most census repos declare",
+                " a dependency on, in the manifests at their HEAD (pixi, magic, pyproject,",
+                " recipe): by GitHub URL, package name or repo name.</p>",
+                "<div class=tbl><table><thead><tr><th>Repository</th><th class=num>Used by</th>",
+                "<th class=num>Stars</th><th class=num>Forks</th></tr></thead><tbody>",
+            )
+            for i in c.depended:
+                ref l = c.libs[i]
+                h.write(
+                    "<tr><td><a class=repo href='/repos/", html_escape(l.repo), "'>",
+                    html_escape(l.repo), "</a></td><td class=num>", _n(Int64(len(l.used_by))),
+                    "</td><td class=num>", _n(l.stars), "</td><td class=num>", _n(l.forks), "</td></tr>",
+                )
+            h.write("</tbody></table></div></div></div>")
         # As of.
         h.write(
             "<p class=asof>Data as of ", _as_of(c.sources.as_of_ms), " (the latest snapshot of the tables",
@@ -1120,8 +1202,18 @@ def overview_json(req: Request, c: Cache) raises -> Response:
             out += ","
         out.write(
             '{"repo":', _q(c.rising[i]), ',"stars_30d":', c.rising_gain[i],
-            ',"stars":', c.rising_stars[i], "}",
+            ',"forks_30d":', c.rising_forks[i], ',"used_by":', c.rising_used_by[i],
+            ',"score":', c.rising_score[i], ',"stars":', c.rising_stars[i], "}",
         )
+    out.write(
+        '],"rising_weights":{"forks":', RISING_FORK_WEIGHT, ',"used_by":', RISING_USED_BY_WEIGHT,
+        '},"most_depended_on":[',
+    )
+    for k in range(len(c.depended)):
+        if k > 0:
+            out += ","
+        ref l = c.libs[c.depended[k]]
+        out.write('{"repo":', _q(l.repo), ',"used_by":', len(l.used_by), ',"stars":', l.stars, "}")
     out += '],"most_active":['
     for i in range(len(c.active_repos)):
         if i > 0:
@@ -1235,7 +1327,10 @@ def _lib_json(l: Library) -> String:
         ',"stats_as_of":', _q(day_text(l.stats_as_of) if l.stats_as_of > 0 else ""),
         ',"open_issues":', l.open_issues, ',"watchers":', l.watchers,
         ',"archived":', "true" if l.archived else "false",
-        ',"state":', _q(l.state), ',"renamed_to":', _q(l.renamed_to), "}",
+        ',"state":', _q(l.state), ',"renamed_to":', _q(l.renamed_to),
+        ',"declared_deps":', "null" if l.declared_deps < 0 else String(l.declared_deps),
+        ',"depends_on":', _strs_json(l.depends_on), ',"used_by":', _strs_json(l.used_by),
+        ',"dependencies":', _strs_json(l.declared), "}",
     )
 
 
@@ -1531,6 +1626,47 @@ def _stat(label: String, value: String, note: String = "") -> String:
     )
 
 
+def _deps_stat(l: Library) -> String:
+    """The "Depends on" tile: the Mojo libraries of the census among its
+    dependencies, of how many it declares."""
+    if l.declared_deps < 0:
+        return _stat("Depends on", _or_dash(String()), "dependencies not read yet")
+    return _stat(
+        "Depends on", _n(Int64(len(l.depends_on))),
+        String("Mojo libraries, of ", l.declared_deps, " declared"),
+    )
+
+
+def _repo_links(repos: List[String]) -> String:
+    """Repos as links to their pages, comma-separated."""
+    var h = String()
+    for i in range(len(repos)):
+        if i > 0:
+            h += ", "
+        h.write("<a class=repo href='/repos/", html_escape(repos[i]), "'>", html_escape(repos[i]), "</a>")
+    return h^
+
+
+def _deps_section(l: Library) -> String:
+    """What it depends on and what depends on it, when there is any."""
+    if len(l.declared) == 0 and len(l.used_by) == 0:
+        return String()
+    var h = String("<h2>Dependencies</h2><div class=prose>")
+    if len(l.depends_on) > 0:
+        h.write("<p>Depends on ", _repo_links(l.depends_on), ".</p>")
+    if len(l.used_by) > 0:
+        h.write("<p>Used by ", _repo_links(l.used_by), ".</p>")
+    if len(l.declared) > 0:
+        h.write("<p class=mute>Declared in its manifests at HEAD (toolchain left out): ")
+        for i in range(len(l.declared)):
+            if i > 0:
+                h += ", "
+            h.write("<code>", html_escape(l.declared[i]), "</code>")
+        h.write(".</p>")
+    h.write("</div>")
+    return h^
+
+
 def _version_stat(l: Library) -> String:
     """The Mojo version tile: the detected version and where it was read
     (`24.4`, from CI), else why there is none, and the estimate by date, kept
@@ -1584,7 +1720,9 @@ def repo_page(req: Request, c: Cache) raises -> Response:
                 if l.state.byte_length() > 0 and l.state != "ok" and l.state != "renamed" else String(),
             "</p><div class=stats>",
             _stat("Stars", _n(l.stars), String("as of ", day_text(l.stats_as_of)) if l.stats_as_of > 0 else String("when found")),
-            _stat("Forks", _n(l.forks)),
+            _stat("Forks", _n(l.forks), String("as of ", day_text(l.stats_as_of)) if l.stats_as_of > 0 else String("when found")),
+            _deps_stat(l),
+            _stat("Used by", _n(Int64(len(l.used_by))), "census repos that depend on it"),
             _stat("Open issues", _n(l.open_issues)) if l.stats_as_of > 0 else String(),
             _stat("Watchers", _n(l.watchers)) if l.stats_as_of > 0 else String(),
             _stat("Created", day(l.created_at), String(_age(l.created_at, today), " ago") if l.created_at else String()),
@@ -1595,6 +1733,7 @@ def repo_page(req: Request, c: Cache) raises -> Response:
             _stat("License", _or_dash(l.license)),
             "</div></div>",
             "<h2>Lines of Mojo</h2>", _chart(pts),
+            _deps_section(l),
             "<h2>Stars per month</h2>",
         )
         ref loaded = c.loaded
