@@ -213,6 +213,9 @@ struct Builder(Movable):
     var ids: Dict[String, Int]
     """Each repository's index in `accs`, by name: one accumulator per name,
     however many rows of mojo.repos name it."""
+    var repo_rows: Int
+    """Rows of mojo.repos read, duplicates included (`model.libraries`
+    counts them)."""
     var cell_seq: List[Int64]
     """`accs.len * months` cells: the newest commit's seq of the repository
     in the month, -1 for none."""
@@ -228,6 +231,7 @@ struct Builder(Movable):
         self.months = max(month_of_days(now_days) - BASE_MONTH + 1, 1)
         self.accs = List[RepoAcc]()
         self.ids = Dict[String, Int]()
+        self.repo_rows = 0
         self.cell_seq = List[Int64]()
         self.cell_lines = List[Int64]()
         self.cell_tool = List[UInt8]()

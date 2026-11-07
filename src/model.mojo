@@ -125,6 +125,7 @@ def libraries(mut ob: Builder) raises -> List[Library]:
         var c_size = col(b, "size_kb")
         var c_topics = col(b, "topics") if has_col(b, "topics") else -1
         for r in range(b.num_rows):
+            ob.repo_rows += 1
             var repo = str_at(b.column(c_repo), r)
             var first_seen = i64_at(b.column(c_first), r)
             var at = index.get(repo, -1)
