@@ -526,3 +526,29 @@ def top_gains(gains: List[Int64], n: Int) -> List[Int]:
         if len(out) > n:
             _ = out.pop()
     return out^
+
+
+comptime RISING_FORK_WEIGHT = Int64(3)
+"""What a fork gained in the window counts for in `rising_score`, in stars.
+A fork is a stronger sign than a star (someone means to change or build on
+the code) and rarer: the census's repos have about one fork for every ten
+stars (modular/modular 30,110 and 3,236, tairov/llama2.mojo 2,129 and 139).
+At 3 a fork outweighs a star without a handful of forks outranking a
+repo's stars."""
+comptime RISING_USED_BY_WEIGHT = Int64(5)
+"""What each census repo that depends on it counts for, in stars. A
+declared dependency is the strongest sign of use, but `mojo.repo_deps` has
+HEAD only, no history, so this is the total now, not a gain: kept smaller
+than its strength would say, and it only reorders repos that gained a star
+or a fork (`rising_score`), so an established library doesn't sit in Rising
+for being established."""
+
+
+def rising_score(stars: Int64, forks: Int64, used_by: Int64) -> Int64:
+    """The Rising ranking: `stars` and `forks` gained in the window (GH
+    Archive's WatchEvents and ForkEvents), plus the repos that depend on it
+    now, weighted (`RISING_FORK_WEIGHT`, `RISING_USED_BY_WEIGHT`). 0 for a
+    repo that gained neither stars nor forks."""
+    if stars + forks <= 0:
+        return 0
+    return stars + RISING_FORK_WEIGHT * forks + RISING_USED_BY_WEIGHT * used_by

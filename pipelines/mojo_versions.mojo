@@ -1,6 +1,6 @@
 """The mojo_versions pipeline: the Mojo version each repository states at its
 HEAD, for the ones whose lock file and manifest name none, and an estimate by
-date.
+date; and the dependencies its manifests declare at HEAD.
 
 Keyed by the `repo` column of `mojo.repos` like mojo_history, 50 repositories
 a run, and a sensor, so each snapshot mojo_repos commits starts runs for the
@@ -10,13 +10,22 @@ repositories already in the lake by hand:
 
     orca backfill --rerun mojo_versions @all
 
+which is also how `mojo.repo_deps` and `declared_deps` were filled for the
+repositories read before dependencies were (a row of `mojo.repo_versions`
+with `declared_deps` null is one of those). New repositories get both from
+their first run. Which dependencies are census repositories, and how many
+repositories use each, the console works out from the rows when it builds
+(`deps.resolve`), so a repository added later is matched without a rerun of
+the ones that depend on it.
+
 Each repository goes to a dista task (`read_head_version`: a blobless clone,
 the few files at HEAD that can state a version, the date of the last commit
-that touched a Mojo file). The step then replaces the repositories' rows of
-`mojo.repo_versions` in one `overwrite` snapshot, as mojo_retool does: it
+that touched a Mojo file, and the manifests' dependencies). The step then
+replaces the repositories' rows of `mojo.repo_deps` and of
+`mojo.repo_versions`, one `overwrite` snapshot each, as mojo_retool does: it
 keeps the other repositories' rows and adds the new ones, so no row is
 duplicated and a rerun gives the same. A repository whose clone fails keeps
-the row it had.
+the rows it had.
 """
 
 from std.os import getenv, setenv
@@ -27,9 +36,10 @@ from orca import Ctx, Gather, Name, Pipeline, Step, Tasks, orca_main
 from orca.keyed import Keyed
 from orca.tables import ensure_table, scan, table
 
+from deps import RepoDep, decode_deps
 from headversion import HeadVersion, read_head_version
-from historyrows import head_version_rows, head_versions_batch
-from lake import REPOS, REPO_VERSIONS, repo_versions_schema
+from historyrows import head_version_rows, head_versions_batch, repo_dep_rows, repo_deps_batch
+from lake import REPOS, REPO_DEPS, REPO_VERSIONS, repo_deps_schema, repo_versions_schema
 from replace import replace_files
 
 # A dista `Task` runs on a worker process: it clones one repository and
@@ -42,9 +52,13 @@ comptime VersionTasks = Tasks[ReadHead]
 
 def versions(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
     """The step: reads the HEAD of each repository in `keys` (up to 50) and
-    replaces those repositories' rows of `mojo.repo_versions` in one
-    snapshot. Returns the number of repositories read."""
+    replaces those repositories' rows of `mojo.repo_deps` and
+    `mojo.repo_versions`, a snapshot each. Returns the number of repositories
+    read."""
+    # `ensure_table` adds `declared_deps` to a `mojo.repo_versions` made
+    # before it; the old rows read it as null.
     var t = ensure_table(ctx, REPO_VERSIONS, repo_versions_schema())
+    var td = ensure_table(ctx, REPO_DEPS, repo_deps_schema())
     # Read the table's current rows, and the data files they are in. The
     # unpartitioned table is rewritten whole: every row of a repository not
     # in this run is kept (`old`), and every file is removed (`files`).
@@ -64,6 +78,21 @@ def versions(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
         if Int64(len(old)) != file_rows:
             raise Error(
                 REPO_VERSIONS, ": read ", len(old), " rows but its files hold ", file_rows,
+            )
+    # The same for `mojo.repo_deps`, also rewritten whole.
+    var old_deps = List[RepoDep]()
+    var dep_files = List[String]()
+    var dep_file_rows = Int64(0)
+    if td.metadata.has_current_snapshot:
+        for task in scan(ctx, td).plan_files():
+            dep_files.append(task.data_file.file_path)
+            dep_file_rows += task.data_file.record_count
+        for b in scan(ctx, td).to_batches():
+            for ref r in repo_dep_rows(b):
+                old_deps.append(r.copy())
+        if Int64(len(old_deps)) != dep_file_rows:
+            raise Error(
+                REPO_DEPS, ": read ", len(old_deps), " rows but its files hold ", dep_file_rows,
             )
     # All tasks are started, then collected in order; only as many clones run
     # at once as there are dista workers.
@@ -95,7 +124,7 @@ def versions(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
         ctx.log(String(
             names[i], ": ", h.version if h.version else "no version",
             " (", h.source if h.source else "-", ") estimate ",
-            h.estimate if h.estimate else "-",
+            h.estimate if h.estimate else "-", ", ", h.declared_deps, " dependencies",
         ))
         fresh[names[i]] = h^
     # The new table contents: the old rows of the other repositories, then
@@ -111,11 +140,24 @@ def versions(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
     # `replace.replace_files`; a retry finds the commit its first attempt
     # made). It is safe only because one run writes this table at a time
     # (`max_runs` is left at its default of 1).
+    # The dependencies the same way: the other repositories' rows, then the
+    # fresh ones (a repository read with no manifest has none, and loses any
+    # it had). They are committed first, so a `declared_deps` that isn't null
+    # means its rows are in.
+    var out_deps = List[RepoDep]()
+    for ref r in old_deps:
+        if r.repo not in fresh:
+            out_deps.append(r.copy())
+    for e in fresh.items():
+        for ref d in decode_deps(e.value.deps):
+            out_deps.append(RepoDep(e.key, e.value.read_at, d.copy()))
+    var dep_id = replace_files(ctx, td, dep_files, [repo_deps_batch(out_deps)])
     var id = replace_files(ctx, t, files, [head_versions_batch(out)])
     ctx.log(String(
         len(fresh), " repositories read (", failed, " kept as they were), ",
         found, " with a version; ", REPO_VERSIONS, " ", len(old), " -> ", len(out),
-        " rows; snapshot ", id,
+        " rows; snapshot ", id, "; ", REPO_DEPS, " ", len(old_deps), " -> ",
+        len(out_deps), " rows; snapshot ", dep_id,
     ))
     if failed > 0 and failed == len(refs):
         raise Error("every repository in this run failed (", failed, ")")
@@ -123,9 +165,9 @@ def versions(mut ctx: Ctx, keys: Seq[Name]) raises -> Int:
 
 
 # `Gather` runs the step once per run, with all the run's keys (repository
-# names) as a `Seq`. `reads` includes REPO_VERSIONS because the step reads
-# the old rows to keep them, as well as writing it; REPOS is read only,
-# which is what makes the pipeline a sensor on it.
+# names) as a `Seq`. `reads` includes REPO_VERSIONS and REPO_DEPS because the
+# step reads the old rows to keep them, as well as writing them; REPOS is
+# read only, which is what makes the pipeline a sensor on it.
 comptime Versions = Step[
     "versions",
     Seq[Name],
@@ -133,8 +175,8 @@ comptime Versions = Step[
     versions,
     Gather,
     retries=1,
-    reads=[REPOS, REPO_VERSIONS],
-    writes=[REPO_VERSIONS],
+    reads=[REPOS, REPO_VERSIONS, REPO_DEPS],
+    writes=[REPO_VERSIONS, REPO_DEPS],
 ]
 # `Keyed` partitions are names read from a column of a dataset, here the
 # `repo` values of `mojo.repos`; `sensor=True` starts a run over the keys a
